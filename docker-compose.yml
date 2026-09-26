@@ -90,5 +90,13 @@ services:
       backend:
         condition: service_healthy
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflare-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token eyJhIjoiZGE4MGUxNDZhZTIxZGIzNzFhNTBhNzUwOGM2YTZhY2UiLCJ0IjoiYzA5YjNlYTctMDhmZC00MDkxLThmMjQtNWMxNDAyMmYxNGZkIiwicyI6Ik9UYzFNV1EwTW1ZdE9HTTFOeTAwT0RrNUxXRXpabVl0WmpNMVpXWmtObVExWVRWaCJ9
+    depends_on:
+      - backend # Substitua pelo nome exato do serviço do seu backend no Compose
+
 volumes:
   mysql_data:

@@ -5,6 +5,7 @@
 #
 #   Painel:  http://localhost:5173
 #   API:     http://localhost:3000
+#   MySQL:   localhost:3307 (acesso externo; internamente os containers usam db:3306)
 # =============================================================================
 name: nexus
 
@@ -28,8 +29,9 @@ services:
       # Executado só na primeira subida (volume vazio).
       - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     ports:
-      # Exposto só em localhost, para acessar com DBeaver/Workbench ou rodar o backend fora do Docker.
-      - "127.0.0.1:${MYSQL_HOST_PORT:-3306}:3306"
+      # host:container. A 3306 do host já está em uso; externamente o MySQL do Nexus fica na 3307.
+      # O container continua escutando na 3306, e é por ela que o backend se conecta (rede interna).
+      - "3307:3306"
     healthcheck:
       # Via TCP: durante o init o MySQL roda sem rede, então só fica "healthy" quando estiver pronto de fato.
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
@@ -50,8 +52,10 @@ services:
       PORT: 3000
       HOST: 0.0.0.0
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Rede interna do Docker: nome do serviço + porta do CONTAINER (3306),
+      # não a porta publicada no host (3307).
       MYSQL_HOST: db
-      MYSQL_PORT: 3307
+      MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE:-nexus}
       MYSQL_USER: ${MYSQL_USER:-nexus}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}

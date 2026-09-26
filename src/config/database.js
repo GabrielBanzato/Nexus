@@ -1,8 +1,6 @@
 import knex from 'knex';
 import { config } from './env.js';
 
-const REQUIRED_TABLES = ['leads', 'scrape_jobs'];
-
 export const db = knex({
   client: 'mysql2',
   connection: {
@@ -27,6 +25,71 @@ export const db = knex({
   acquireConnectionTimeout: 10_000,
 });
 
+// ---------------------------------------------------------------------------
+// Schema (auto-migration)
+// Idempotente: CREATE TABLE IF NOT EXISTS pode rodar em todo boot, inclusive com
+// várias instâncias subindo ao mesmo tempo. Mantenha em sincronia com db/init.sql.
+// ---------------------------------------------------------------------------
+
+const SCHEMA = [
+  {
+    table: 'leads',
+    sql: `
+      CREATE TABLE IF NOT EXISTS leads (
+        id                 INT UNSIGNED   NOT NULL AUTO_INCREMENT,
+        nome               VARCHAR(255)   NOT NULL,
+        nicho              VARCHAR(150)   NULL COMMENT 'Categoria do Google Maps (ex: Pizzaria)',
+        endereco           VARCHAR(500)   NULL,
+        telefone           VARCHAR(30)    NULL,
+        website            VARCHAR(500)   NULL,
+        nota               DECIMAL(2,1)   NULL COMMENT '0.0 a 5.0',
+        avaliacoes_qtd     INT UNSIGNED   NULL,
+        tem_site           TINYINT(1)     AS (website IS NOT NULL AND website <> '') STORED,
+        grupo              ENUM('COM_SITE', 'SEM_SITE') NOT NULL,
+        status_prospeccao  ENUM('NOVO', 'CONTATADO', 'EM_NEGOCIACAO', 'FECHADO', 'DESCARTADO')
+                           NOT NULL DEFAULT 'NOVO',
+        maps_url           VARCHAR(1000)  NULL,
+        termo_busca        VARCHAR(255)   NULL,
+        chave_dedupe       VARCHAR(255)   NOT NULL COMMENT 'tel:<digitos> ou na:<nome>|<endereco> normalizados',
+        criado_em          DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        atualizado_em      DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_leads_chave_dedupe (chave_dedupe),
+        KEY idx_leads_grupo_status (grupo, status_prospeccao),
+        KEY idx_leads_nicho (nicho),
+        KEY idx_leads_criado_em (criado_em),
+        CONSTRAINT chk_leads_nota CHECK (nota IS NULL OR nota BETWEEN 0 AND 5)
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
+  {
+    table: 'scrape_jobs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS scrape_jobs (
+        id            CHAR(36)      NOT NULL,
+        search_term   VARCHAR(255)  NOT NULL,
+        max_results   INT UNSIGNED  NOT NULL,
+        status        ENUM('PENDING', 'RUNNING', 'DONE', 'FAILED') NOT NULL DEFAULT 'PENDING',
+        found         INT UNSIGNED  NOT NULL DEFAULT 0,
+        inserted      INT UNSIGNED  NOT NULL DEFAULT 0,
+        updated       INT UNSIGNED  NOT NULL DEFAULT 0,
+        error         TEXT          NULL,
+        created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        started_at    DATETIME      NULL,
+        finished_at   DATETIME      NULL,
+
+        PRIMARY KEY (id),
+        KEY idx_scrape_jobs_status (status)
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
+];
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** O MySQL pode levar alguns segundos para aceitar conexões (ex.: container subindo). */
@@ -47,23 +110,42 @@ async function waitForConnection(logger) {
   }
 }
 
-/** O schema é versionado em db/init.sql (fonte única da verdade); aqui apenas validamos. */
-async function assertSchema() {
+async function listExistingTables(tables) {
   const rows = await db('information_schema.tables')
     .select({ name: 'table_name' })
     .whereRaw('table_schema = DATABASE()')
-    .whereIn('table_name', REQUIRED_TABLES);
+    .whereIn('table_name', tables);
+  return new Set(rows.map((row) => row.name));
+}
 
-  const existing = new Set(rows.map((row) => row.name));
-  const missing = REQUIRED_TABLES.filter((table) => !existing.has(table));
-  if (missing.length) {
-    throw new Error(`Tabelas ausentes no MySQL: ${missing.join(', ')}. Execute db/init.sql no banco "${config.db.database}".`);
+/**
+ * Cria as tabelas que ainda não existem. Tabelas existentes não são alteradas
+ * (CREATE TABLE IF NOT EXISTS não adiciona colunas novas a uma tabela antiga).
+ */
+async function migrate(logger) {
+  const tables = SCHEMA.map((entry) => entry.table);
+  const before = await listExistingTables(tables);
+
+  for (const { table, sql } of SCHEMA) {
+    try {
+      await db.raw(sql);
+    } catch (err) {
+      // Ex.: usuário sem permissão de CREATE. Aqui sim o erro é fatal: sem tabela a API não funciona.
+      throw new Error(`Falha ao criar a tabela "${table}": ${err.message}`);
+    }
+  }
+
+  const created = tables.filter((table) => !before.has(table));
+  if (created.length) {
+    logger.info({ tables: created }, 'Auto-migration: tabelas criadas');
+  } else {
+    logger.info('Auto-migration: schema já estava atualizado');
   }
 }
 
 export async function initDatabase({ logger = console } = {}) {
   await waitForConnection(logger);
-  await assertSchema();
+  await migrate(logger);
 
   // Jobs que estavam em andamento quando o processo caiu não serão retomados.
   await db('scrape_jobs')

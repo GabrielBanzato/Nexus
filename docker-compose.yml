@@ -1,0 +1,84 @@
+# =============================================================================
+# Nexus: stack completa
+#   cp .env.example .env   (defina as senhas)
+#   docker compose up -d --build
+#
+#   Painel:  http://localhost:5173
+#   API:     http://localhost:3000
+# =============================================================================
+name: nexus
+
+services:
+  # ---------------------------------------------------------------------------
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Defina MYSQL_ROOT_PASSWORD no .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-nexus}
+      MYSQL_USER: ${MYSQL_USER:-nexus}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Defina MYSQL_PASSWORD no .env}
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # Executado só na primeira subida (volume vazio).
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      # Exposto só em localhost, para acessar com DBeaver/Workbench ou rodar o backend fora do Docker.
+      - "127.0.0.1:${MYSQL_HOST_PORT:-3306}:3306"
+    healthcheck:
+      # Via TCP: durante o init o MySQL roda sem rede, então só fica "healthy" quando estiver pronto de fato.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true # tini como PID 1: recolhe processos zumbis do Chrome
+    shm_size: 1gb # memória compartilhada para o Chromium
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MYSQL_HOST: db
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-nexus}
+      MYSQL_USER: ${MYSQL_USER:-nexus}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      SCRAPER_HEADLESS: "true"
+      SCRAPER_MAX_RESULTS: ${SCRAPER_MAX_RESULTS:-50}
+      # Autenticação
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD no .env}
+      JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no .env (min. 32 caracteres)}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
+      # Atrás do Nginx: o IP real do usuário vem em X-Forwarded-For (rate limit do login).
+      TRUST_PROXY: "true"
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mysql_data:

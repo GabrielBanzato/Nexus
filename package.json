@@ -1,0 +1,25 @@
+{
+  "name": "nexus-prospeccao",
+  "version": "1.0.0",
+  "description": "Backend de prospecção de leads locais via Google Maps (scraping com Puppeteer).",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "scrape": "node scripts/scrape-cli.js"
+  },
+  "dependencies": {
+    "@fastify/jwt": "^10.2.2",
+    "@fastify/rate-limit": "^11.2.0",
+    "fastify": "^5.2.1",
+    "knex": "^3.1.0",
+    "mysql2": "^3.24.4",
+    "puppeteer": "^24.2.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}

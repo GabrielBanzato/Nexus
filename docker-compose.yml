@@ -90,13 +90,20 @@ services:
       backend:
         condition: service_healthy
 
+  # ---------------------------------------------------------------------------
+  # Cloudflare Tunnel: publica o painel sem abrir portas no servidor.
+  # No painel da Cloudflare, o Public Hostname deve apontar para http://frontend:80
+  # (o Nginx do frontend serve o painel e encaminha /api ao backend).
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflare-tunnel
     restart: unless-stopped
-    command: tunnel --no-autoupdate run --token eyJhIjoiZGE4MGUxNDZhZTIxZGIzNzFhNTBhNzUwOGM2YTZhY2UiLCJ0IjoiYzA5YjNlYTctMDhmZC00MDkxLThmMjQtNWMxNDAyMmYxNGZkIiwicyI6Ik9UYzFNV1EwTW1ZdE9HTTFOeTAwT0RrNUxXRXpabVl0WmpNMVpXWmtObVExWVRWaCJ9
+    command: tunnel --no-autoupdate run
+    environment:
+      # Lido automaticamente pelo cloudflared; nunca deixe o token escrito neste arquivo.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Defina CLOUDFLARE_TUNNEL_TOKEN no .env}
     depends_on:
-      - backend # Substitua pelo nome exato do serviço do seu backend no Compose
+      - frontend
 
 volumes:
   mysql_data:

@@ -96,7 +96,7 @@ services:
   # (o Nginx do frontend serve o painel e encaminha /api ao backend).
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: cloudflare-tunnel
+    container_name: cloudflare-tunnel-nexus
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:

@@ -84,7 +84,7 @@ export default function ActivityTimeline({ entity, id, primaryType }) {
       ) : isLoading ? (
         <Spinner label="A carregar histórico..." />
       ) : logs.length === 0 ? (
-        <EmptyState icon={History} title="Sem atividade registada" description="As ações da equipa sobre este registo aparecem aqui." />
+        <EmptyState icon={History} title="Sem atividade registada" description="As ações da equipe sobre este registo aparecem aqui." />
       ) : (
         <ol className="space-y-5" aria-label="Histórico de atividade">
           {groups.map((group) => (

@@ -65,7 +65,7 @@ export async function buildApp() {
     await protectedApp.register(scrapeRoutes);
     await protectedApp.register(leadRoutes);
 
-    // Gestão de equipa e operações
+    // Gestão de equipe e operações
     await protectedApp.register(userRoutes);
     await protectedApp.register(clientRoutes);
     await protectedApp.register(ticketRoutes);

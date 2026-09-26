@@ -232,7 +232,7 @@ function Leaderboard({ rows, selectedId, onSelect, canSelect, meId, teamSize }) 
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between px-4 pt-4 pb-3 sm:px-5">
         <div>
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-white"><Trophy className="size-4 text-amber-400" />Leaderboard da equipa</h2>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-white"><Trophy className="size-4 text-amber-400" />Leaderboard da equipe</h2>
           <p className="text-xs text-neutral-500">
             {canSelect ? 'Clique num membro para focar as métricas nele.' : `A sua posição entre ${teamSize} membros.`}
           </p>
@@ -345,7 +345,7 @@ function ProspectingBoard({ meId, isManager }) {
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-4 pb-3 sm:px-5">
         <div>
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-white"><Crosshair className="size-4 text-red-500" />Prospecção da equipa</h2>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-white"><Crosshair className="size-4 text-red-500" />Prospecção da equipe</h2>
           <p className="text-xs text-neutral-500">
             {isManager ? `Quem mais prospectou ${periodLabel}. Atualiza sozinho a cada minuto.` : `Os seus números ${periodLabel}.`}
           </p>
@@ -462,7 +462,7 @@ export default function PerformancePage() {
     <div className="space-y-5">
       <PageHeader
         title="Desempenho comercial"
-        description={isManager ? 'Prospecção do dia e da semana, e resultados da equipa no período.' : 'A sua prospecção, os seus resultados no período e a sua posição na equipa.'}
+        description={isManager ? 'Prospecção do dia e da semana, e resultados da equipe no período.' : 'A sua prospecção, os seus resultados no período e a sua posição na equipe.'}
       />
 
       <ProspectingBoard meId={user?.id} isManager={isManager} />
@@ -483,7 +483,7 @@ export default function PerformancePage() {
         )}
         {isManager && (
           <Select aria-label="Colaborador" value={member} onChange={(e) => setMember(e.target.value)} className="w-52">
-            <option value="">Toda a equipa</option>
+            <option value="">Toda a equipe</option>
             {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </Select>
         )}
@@ -533,7 +533,7 @@ export default function PerformancePage() {
               teamSize={data.data.team_size}
             />
           ) : (
-            <EmptyState icon={Trophy} title="Sem dados de equipa" description="O leaderboard aparece assim que houver membros ativos." />
+            <EmptyState icon={Trophy} title="Sem dados de equipe" description="O leaderboard aparece assim que houver membros ativos." />
           )}
 
           <p className="text-xs text-neutral-600">

@@ -14,7 +14,7 @@ export function AuthProvider({ onLogout, children }) {
       isLoading,
       logout: onLogout,
       isAdmin: user?.role === 'admin',
-      // admin e partner gerem clientes, chamados, quadro e veem a equipa.
+      // admin e partner gerem clientes, chamados, quadro e veem a equipe.
       isManager: user?.role === 'admin' || user?.role === 'partner',
     }),
     [user, isLoading, onLogout],

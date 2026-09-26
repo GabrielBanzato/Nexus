@@ -41,7 +41,7 @@ function parseRange({ from, to }) {
 export default async function metricsRoutes(app) {
   /**
    * Desempenho comercial. Controlo de acesso:
-   *  - admin/partner: visão da equipa; `user_id` foca o overview num colaborador.
+   *  - admin/partner: visão da equipe; `user_id` foca o overview num colaborador.
    *  - agent: overview e leaderboard só com os próprios números (com a posição real no ranking).
    */
   app.get('/api/metrics/performance', { schema }, async (request) => {

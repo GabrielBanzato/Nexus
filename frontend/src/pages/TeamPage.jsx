@@ -48,7 +48,7 @@ function AddMemberModal({ open, onClose }) {
     mutationFn: createUser,
     onSuccess: (user) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success(`${user.name} foi adicionado à equipa`, `Partilhe a senha por um canal seguro. Acesso com ${user.email}.`);
+      toast.success(`${user.name} foi adicionado à equipe`, `Partilhe a senha por um canal seguro. Acesso com ${user.email}.`);
       setForm(empty);
       onClose();
     },
@@ -103,7 +103,7 @@ function AddMemberModal({ open, onClose }) {
             Cancelar
           </Button>
           <Button type="submit" form="add-member" icon={UserPlus} loading={mutation.isPending}>
-            Adicionar à equipa
+            Adicionar à equipe
           </Button>
         </>
       }
@@ -224,13 +224,13 @@ export default function TeamPage() {
   });
 
   if (!isAdmin) {
-    return <EmptyState icon={ShieldCheck} title="Acesso restrito" description="A gestão de equipa está disponível apenas para administradores." />;
+    return <EmptyState icon={ShieldCheck} title="Acesso restrito" description="A gestão de equipe está disponível apenas para administradores." />;
   }
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Equipa"
+        title="equipe"
         description="Membros com acesso ao Nexus e os respetivos papéis."
         actions={
           isAdmin && (
@@ -262,7 +262,7 @@ export default function TeamPage() {
       ) : isLoading ? (
         <Spinner />
       ) : visible.length === 0 ? (
-        <EmptyState icon={Users} title="Ninguém por aqui" description={tab === 'inactive' ? 'Não há membros desativados.' : 'Adicione o primeiro membro da equipa.'} />
+        <EmptyState icon={Users} title="Ninguém por aqui" description={tab === 'inactive' ? 'Não há membros desativados.' : 'Adicione o primeiro membro da equipe.'} />
       ) : (
         <Card className="overflow-hidden">
           <ul className="divide-y divide-neutral-800">

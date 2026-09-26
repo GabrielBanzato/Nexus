@@ -90,7 +90,7 @@ export default async function triageRoutes(app) {
     const user = request.currentUser;
     const summary = await getTriageSummary({ assignedTo: isManager(user) ? undefined : user.id });
     if (!isManager(user)) {
-      delete summary.workload; // carga da equipa é visão de gestão
+      delete summary.workload; // carga da equipe é visão de gestão
       delete summary.unassigned;
     }
     return { data: summary };

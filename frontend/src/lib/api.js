@@ -121,7 +121,7 @@ export function fetchScrapeJob(jobId) {
 }
 
 // ---------------------------------------------------------------------------
-// Equipa e operações (respostas no formato { data } / { data, meta })
+// equipe e operações (respostas no formato { data } / { data, meta })
 // ---------------------------------------------------------------------------
 
 /** Query string ignorando valores vazios (undefined, null, '' e false). */

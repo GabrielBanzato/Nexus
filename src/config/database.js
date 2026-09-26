@@ -95,7 +95,7 @@ const SCHEMA = [
     `,
   },
 
-  // --- Gestão de equipa e operações -----------------------------------------
+  // --- Gestão de equipe e operações -----------------------------------------
   // Ordem importa: tabelas referenciadas por FK vêm antes.
   {
     table: 'users',

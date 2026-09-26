@@ -441,7 +441,7 @@ export default function TriagePage({ navigate }) {
         <div className="flex flex-wrap items-center gap-2">
           {isManager && (
             <Select aria-label="Filtrar por responsável" value={assignee} onChange={(e) => changeFilter(setAssignee)(e.target.value)} className="w-48">
-              <option value="">Toda a equipa</option>
+              <option value="">Toda a equipe</option>
               <option value="none">Sem responsável</option>
               {users.map((u) => (
                 <option key={u.id} value={u.id}>{u.name}</option>

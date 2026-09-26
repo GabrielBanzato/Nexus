@@ -20,7 +20,7 @@ const INVALIDATES = {
 const ALL_KEYS = [...new Map(Object.values(INVALIDATES).flat().map((key) => [key[0], key])).values()];
 
 /**
- * Atualizações da equipa em tempo real.
+ * Atualizações da equipe em tempo real.
  *
  * 1. Server-Sent Events via fetch (para enviar o token no header). Ao receber "X mudou",
  *    invalida as queries afetadas; o TanStack Query só refaz as que estão no ecrã.

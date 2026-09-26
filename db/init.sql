@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS scrape_jobs (
   COLLATE = utf8mb4_0900_ai_ci;
 
 -- =============================================================================
--- Gestão de equipa e operações
+-- Gestão de equipe e operações
 -- (ordem importa: tabelas referenciadas por FK vêm antes)
 -- =============================================================================
 

@@ -50,7 +50,7 @@ const changePasswordSchema = {
 };
 
 // Força bruta: 5 tentativas/min por conta (IP + email). A chave inclui o email para que
-// uma equipa inteira atrás do mesmo IP (escritório/NAT) consiga entrar ao mesmo tempo.
+// uma equipe inteira atrás do mesmo IP (escritório/NAT) consiga entrar ao mesmo tempo.
 // Roda no preHandler porque no onRequest o body (email) ainda não foi lido.
 const loginRateLimitPerAccount = {
   max: 5,

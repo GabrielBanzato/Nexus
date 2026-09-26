@@ -34,7 +34,7 @@ const GROUPS = [
   {
     label: 'Administração',
     adminOnly: true, // criar contas e senhas é exclusivo dos administradores
-    routes: [{ path: 'equipa', label: 'Equipa', icon: Users, element: TeamPage }],
+    routes: [{ path: 'equipe', label: 'equipe', icon: Users, element: TeamPage }],
   },
 ];
 
@@ -48,7 +48,7 @@ const LIVE = {
 function LiveIndicator({ status }) {
   const meta = LIVE[status];
   return (
-    <span className="flex items-center gap-2 text-xs text-neutral-500" title={meta.title ?? 'Atualizações em tempo real da equipa'} role="status">
+    <span className="flex items-center gap-2 text-xs text-neutral-500" title={meta.title ?? 'Atualizações em tempo real da equipe'} role="status">
       <span className="relative flex size-2">
         {meta.ping && <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />}
         <span className={cx('relative inline-flex size-2 rounded-full', meta.dot)} />
@@ -64,7 +64,7 @@ export default function AppShell() {
   const live = useLiveUpdates(user?.id);
 
   // Espera o papel do utilizador: sem isso o menu e o redirecionamento de rotas restritas
-  // seriam calculados como "sem permissão" (F5 em #/equipa mandaria um admin para outra página).
+  // seriam calculados como "sem permissão" (F5 em #/equipe mandaria um admin para outra página).
   if (isLoading || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#111111]">

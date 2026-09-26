@@ -1,7 +1,7 @@
 /** Rótulos e cores de domínio, num só lugar. `tone` corresponde às variantes do <Badge>. */
 
 export const ROLE_META = {
-  admin: { label: 'Admin', tone: 'red', description: 'Acesso total, gere a equipa' },
+  admin: { label: 'Admin', tone: 'red', description: 'Acesso total, gere a equipe' },
   partner: { label: 'Parceiro', tone: 'amber', description: 'Gere clientes, chamados e o quadro' },
   agent: { label: 'Agente', tone: 'sky', description: 'Trabalha os próprios clientes e chamados' },
 };

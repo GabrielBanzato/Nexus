@@ -545,7 +545,7 @@ export default function PipelinePage() {
 
       <div className="flex flex-wrap items-center gap-2">
         <Select aria-label="Filtrar por responsável" value={owner} onChange={(e) => setOwner(e.target.value)} className="w-52">
-          <option value="">Toda a equipa</option>
+          <option value="">Toda a equipe</option>
           <option value="mine">Os meus negócios</option>
           {users.map((u) => (
             <option key={u.id} value={u.id}>{u.name}</option>
@@ -647,7 +647,7 @@ export default function PipelinePage() {
         onClose={cancelLoss}
         size="sm"
         title="Marcar como perdido"
-        description="O motivo alimenta a análise de perdas da equipa."
+        description="O motivo alimenta a análise de perdas da equipe."
         footer={
           <>
             <Button variant="ghost" onClick={cancelLoss}>Cancelar</Button>

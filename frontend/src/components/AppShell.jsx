@@ -33,7 +33,7 @@ const GROUPS = [
   },
   {
     label: 'Administração',
-    managersOnly: true,
+    adminOnly: true, // criar contas e senhas é exclusivo dos administradores
     routes: [{ path: 'equipa', label: 'Equipa', icon: Users, element: TeamPage }],
   },
 ];
@@ -59,7 +59,7 @@ function LiveIndicator({ status }) {
 }
 
 export default function AppShell() {
-  const { user, isLoading, isManager, logout } = useAuth();
+  const { user, isLoading, isAdmin, logout } = useAuth();
   const [route, navigate] = useHashRoute('prospeccao');
   const live = useLiveUpdates(user?.id);
 
@@ -73,7 +73,7 @@ export default function AppShell() {
     );
   }
 
-  const groups = GROUPS.filter((g) => !g.managersOnly || isManager);
+  const groups = GROUPS.filter((g) => !g.adminOnly || isAdmin);
   const routes = groups.flatMap((g) => g.routes);
   const current = routes.find((r) => r.path === route) ?? routes[0];
   const Page = current.element;

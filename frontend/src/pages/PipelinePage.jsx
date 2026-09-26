@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DndContext, DragOverlay, useDroppable } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Building2, CalendarClock, Handshake, Plus, Search, Target, Trash2, TrendingUp, Trophy, UserRound } from 'lucide-react';
-import { createDeal, deleteDeal, getDealBoard, moveDeal, updateDeal } from '../lib/api.js';
+import { Building2, CalendarClock, Handshake, Plus, Search, StickyNote, Target, Trash2, TrendingUp, Trophy, UserRound } from 'lucide-react';
+import { addNote, createDeal, deleteDeal, getDealBoard, moveDeal, updateDeal } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
 import {
@@ -44,7 +44,14 @@ const daysSince = (date) => Math.floor((Date.now() - new Date(date).getTime()) /
 // Cartão
 // ---------------------------------------------------------------------------
 
-function DealCard({ deal, overlay = false }) {
+/** Botão dentro do cartão arrastável: não pode iniciar o arrasto nem abrir o detalhe. */
+const stopCardEvents = {
+  onPointerDown: (e) => e.stopPropagation(),
+  onClick: (e) => e.stopPropagation(),
+  onKeyDown: (e) => e.stopPropagation(),
+};
+
+function DealCard({ deal, overlay = false, onNote }) {
   const closed = deal.stage === 'won' || deal.stage === 'lost';
   const today = new Date().toISOString().slice(0, 10);
   const overdue = !closed && deal.expected_close_date && deal.expected_close_date < today;
@@ -70,22 +77,48 @@ function DealCard({ deal, overlay = false }) {
         </p>
       )}
       {deal.stage === 'lost' && deal.lost_reason && <p className="mt-1.5 line-clamp-2 text-xs text-red-300/80">{deal.lost_reason}</p>}
-      <div className="mt-3 flex items-center justify-between gap-2 text-xs">
+      {deal.last_note && (
+        <p className="mt-2 flex gap-1.5 rounded-lg bg-neutral-900/80 px-2 py-1.5 text-xs text-neutral-400" title={`Última nota · ${formatRelative(deal.last_note_at)}`}>
+          <StickyNote className="mt-0.5 size-3 shrink-0 text-amber-400/70" />
+          <span className="line-clamp-2">{deal.last_note}</span>
+        </p>
+      )}
+      {/* Rodapé compacto: o nome do responsável tem prioridade no espaço. */}
+      <div className="mt-3 flex items-center gap-1.5 text-xs">
         {deal.owner_id ? (
-          <span className="flex min-w-0 items-center gap-1.5 text-neutral-400">
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 text-neutral-400" title={`Responsável: ${deal.owner_name}`}>
             <Avatar name={deal.owner_name ?? '?'} id={deal.owner_id} size="xs" />
-            <span className="truncate">{deal.owner_name}</span>
+            <span className="truncate">{deal.owner_name?.split(' ')[0]}</span>
           </span>
         ) : (
-          <span className="flex items-center gap-1 text-neutral-600"><UserRound className="size-3.5" />Sem responsável</span>
+          <span className="flex min-w-0 flex-1 items-center gap-1 text-neutral-600"><UserRound className="size-3.5 shrink-0" /><span className="truncate">Sem responsável</span></span>
+        )}
+        {onNote && (
+          <button
+            type="button"
+            {...stopCardEvents}
+            onClick={(e) => {
+              e.stopPropagation();
+              onNote(deal);
+            }}
+            aria-label={`Adicionar nota a ${deal.title}${deal.notes_count ? ` (${deal.notes_count} notas)` : ''}`}
+            title="Adicionar nota rápida"
+            className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-neutral-200 focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:outline-none"
+          >
+            <StickyNote className="size-3.5" />
+            {deal.notes_count > 0 ? <span className="tabular-nums">{deal.notes_count}</span> : <Plus className="size-3" />}
+          </button>
         )}
         {overdue ? (
-          <span className="flex shrink-0 items-center gap-1 font-medium text-red-400" title={`Previsão de fecho: ${deal.expected_close_date}`}>
-            <CalendarClock className="size-3" />Atrasado
+          <span className="flex shrink-0 items-center gap-1 font-medium text-red-400" title={`Atrasado · previsão de fecho: ${deal.expected_close_date}`}>
+            <CalendarClock className="size-3" />Atraso
           </span>
         ) : (
-          <span className={cx('shrink-0', idle ? 'text-amber-400' : 'text-neutral-600')} title="Tempo neste estágio">
-            {closed ? formatRelative(deal.won_at ?? deal.lost_at) : `${daysSince(deal.stage_changed_at)}d no estágio`}
+          <span
+            className={cx('shrink-0 tabular-nums', idle ? 'text-amber-400' : 'text-neutral-600')}
+            title={closed ? `${deal.stage === 'won' ? 'Fechado' : 'Perdido'} ${formatRelative(deal.won_at ?? deal.lost_at)}` : `${daysSince(deal.stage_changed_at)} dia(s) neste estágio`}
+          >
+            {closed ? new Date(deal.won_at ?? deal.lost_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : `${daysSince(deal.stage_changed_at)}d`}
           </span>
         )}
       </div>
@@ -93,7 +126,7 @@ function DealCard({ deal, overlay = false }) {
   );
 }
 
-function SortableDeal({ deal, onOpen, canDrag }) {
+function SortableDeal({ deal, onOpen, onNote, canDrag }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: deal.id, disabled: !canDrag });
   return (
     <div
@@ -113,20 +146,27 @@ function SortableDeal({ deal, onOpen, canDrag }) {
       }}
       className={cx('touch-manipulation rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-red-600', isDragging && 'opacity-30', !canDrag && 'cursor-pointer')}
     >
-      <DealCard deal={deal} />
+      <DealCard deal={deal} onNote={onNote} />
     </div>
   );
 }
 
-function StageColumn({ stage, deals, totals, onOpen, canDrag, onAdd }) {
+const EMPTY_COLUMN_TEXT = {
+  lead: 'Leads qualificados no Radar de Prospecção aparecem aqui',
+  won: 'Arraste para aqui os clientes fechados',
+  lost: 'Negócios perdidos',
+};
+
+function StageColumn({ stage, deals, totals, onOpen, onNote, canDrag, onAdd }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
   const closedStage = stage.id === 'won' || stage.id === 'lost';
 
+  // Em ecrãs largos (xl) as 5 colunas dividem a largura: todas visíveis, sem scroll ao arrastar.
   return (
     <section
       aria-label={stage.label}
       data-board-column={stage.id}
-      className="flex w-[82vw] max-w-72 shrink-0 snap-start flex-col rounded-2xl border border-neutral-800 bg-[#161616] sm:w-72"
+      className="flex w-[82vw] max-w-72 shrink-0 snap-start flex-col rounded-2xl border border-neutral-800 bg-[#161616] sm:w-72 xl:w-auto xl:max-w-none xl:min-w-52 xl:flex-1 xl:basis-0"
     >
       <header className="px-3 pt-3 pb-2">
         <div className="flex items-center justify-between">
@@ -145,11 +185,11 @@ function StageColumn({ stage, deals, totals, onOpen, canDrag, onAdd }) {
       <SortableContext id={stage.id} items={deals.map((d) => d.id)} strategy={verticalListSortingStrategy}>
         <div ref={setNodeRef} className={cx('mx-2 mb-2 flex min-h-32 flex-1 flex-col gap-2 rounded-xl p-1 transition-colors', isOver && 'bg-red-950/20 ring-1 ring-red-900/50')}>
           {deals.map((deal) => (
-            <SortableDeal key={deal.id} deal={deal} onOpen={onOpen} canDrag={canDrag(deal)} />
+            <SortableDeal key={deal.id} deal={deal} onOpen={onOpen} onNote={onNote} canDrag={canDrag(deal)} />
           ))}
           {deals.length === 0 && (
             <p className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-neutral-800 px-3 py-6 text-center text-xs text-neutral-600">
-              {stage.id === 'won' ? 'Arraste para aqui os negócios fechados' : stage.id === 'lost' ? 'Negócios perdidos' : 'Sem negócios'}
+              {EMPTY_COLUMN_TEXT[stage.id] ?? 'Sem negócios'}
             </p>
           )}
         </div>
@@ -342,6 +382,81 @@ function DealDrawer({ deal, canEdit, canDelete, onClose, onMoveTo, onDeleted }) 
 }
 
 // ---------------------------------------------------------------------------
+// Nota rápida
+// ---------------------------------------------------------------------------
+
+const NOTE_MAX = 500;
+
+function QuickNoteModal({ deal, onClose }) {
+  const [text, setText] = useState('');
+  const [error, setError] = useState(null);
+  const queryClient = useQueryClient();
+  const toast = useToast();
+
+  const mutation = useMutation({
+    mutationFn: () => addNote('deals', deal.id, text.trim()),
+    onSuccess: () => {
+      toast.success('Nota adicionada', deal.title);
+      queryClient.invalidateQueries({ queryKey: ['deals'] });
+      queryClient.invalidateQueries({ queryKey: ['activity', 'deals', deal.id] });
+      onClose();
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (!text.trim()) return setError('Escreva a nota.');
+    mutation.mutate();
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="sm"
+      title="Nota rápida"
+      description={`${deal.title}${deal.owner_name ? ` · responsável: ${deal.owner_name}` : ''}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button type="submit" form="quick-note" loading={mutation.isPending}>Guardar nota</Button>
+        </>
+      }
+    >
+      <form id="quick-note" onSubmit={submit} noValidate>
+        <Field label="Nota" error={error} hint={`${text.length}/${NOTE_MAX} · fica no histórico do negócio`}>
+          {({ id, invalid }) => (
+            <textarea
+              id={id}
+              data-autofocus
+              aria-invalid={invalid}
+              rows={4}
+              maxLength={NOTE_MAX}
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value);
+                setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit(e);
+              }}
+              placeholder="Ex: Ligou às 15h, pediu orçamento com loja virtual. Retornar sexta."
+              className={cx(inputClass, 'h-auto resize-none py-2')}
+            />
+          )}
+        </Field>
+      </form>
+      {deal.last_note && (
+        <p className="mt-3 text-xs text-neutral-500">
+          Última nota ({formatRelative(deal.last_note_at)}): <span className="text-neutral-400">“{deal.last_note}”</span>
+        </p>
+      )}
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Página
 // ---------------------------------------------------------------------------
 
@@ -357,6 +472,7 @@ export default function PipelinePage() {
   const [creatingIn, setCreatingIn] = useState(null);
   const [pendingLoss, setPendingLoss] = useState(null); // movimento para "Perdido" à espera do motivo
   const [lossReason, setLossReason] = useState('');
+  const [noteFor, setNoteFor] = useState(null);
 
   const params = { mine: owner === 'mine', owner_id: owner && owner !== 'mine' ? owner : undefined, q };
   const boardKey = useMemo(() => ['deals', 'board', params], [owner, q]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -417,7 +533,7 @@ export default function PipelinePage() {
     <div className="space-y-5">
       <PageHeader
         title="Pipeline de negociação"
-        description="Arraste os negócios entre estágios. Ao fechar, o cliente conquistado é registado automaticamente."
+        description="Leads qualificados no Radar entram em Triagem/Novo. Arraste os cartões entre colunas; em Cliente Fechado, o cliente é registado automaticamente."
         actions={<Button icon={Plus} onClick={() => setCreatingIn('lead')}>Novo negócio</Button>}
       />
 
@@ -467,6 +583,7 @@ export default function PipelinePage() {
                 deals={board[stage.id] ?? []}
                 totals={totals?.[stage.id]}
                 onOpen={(deal) => setOpenId(deal.id)}
+                onNote={setNoteFor}
                 canDrag={canDrag}
                 onAdd={setCreatingIn}
               />
@@ -501,6 +618,8 @@ export default function PipelinePage() {
           />
         </Modal>
       )}
+
+      {noteFor && <QuickNoteModal deal={noteFor} onClose={() => setNoteFor(null)} />}
 
       {openDeal && (
         <DealDrawer

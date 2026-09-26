@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS leads (
   grupo              ENUM('COM_SITE', 'SEM_SITE') NOT NULL,
   status_prospeccao  ENUM('NOVO', 'CONTATADO', 'EM_NEGOCIACAO', 'FECHADO', 'DESCARTADO')
                      NOT NULL DEFAULT 'NOVO',
+  is_hidden          TINYINT(1)     NOT NULL DEFAULT 0 COMMENT 'Oculto/arquivado (soft delete)',
+  hidden_at          DATETIME       NULL,
+  hidden_by          INT UNSIGNED   NULL,
 
   -- Metadados da extração
   maps_url           VARCHAR(1000)  NULL,
@@ -38,6 +41,8 @@ CREATE TABLE IF NOT EXISTS leads (
   KEY idx_leads_grupo_status (grupo, status_prospeccao),
   KEY idx_leads_nicho (nicho),
   KEY idx_leads_criado_em (criado_em),
+  KEY idx_leads_visiveis (is_hidden, criado_em),
+  KEY idx_leads_termo_busca (termo_busca),
   CONSTRAINT chk_leads_nota CHECK (nota IS NULL OR nota BETWEEN 0 AND 5)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
@@ -206,7 +211,7 @@ CREATE TABLE IF NOT EXISTS deals (
   phone                VARCHAR(30)    NULL,
   email                VARCHAR(190)   NULL,
   value                DECIMAL(12,2)  NOT NULL DEFAULT 0,
-  stage                ENUM('lead', 'qualification', 'proposal', 'negotiation', 'won', 'lost') NOT NULL DEFAULT 'lead',
+  stage                ENUM('lead', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead',
   position             INT UNSIGNED   NOT NULL DEFAULT 0,
   owner_id             INT UNSIGNED   NULL,
   lead_id              INT UNSIGNED   NULL,

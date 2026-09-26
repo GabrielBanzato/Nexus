@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, BarChart3, Clock, Percent, Receipt, Table2, Trophy, Users } from 'lucide-react';
-import { getPerformance } from '../lib/api.js';
+import { ArrowDown, ArrowUp, BarChart3, Clock, Crosshair, Filter, Percent, PhoneCall, Receipt, Table2, Trophy, Users } from 'lucide-react';
+import { getPerformance, getProspecting } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useUserDirectory } from '../lib/hooks.js';
 import {
@@ -11,7 +11,7 @@ import {
   formatCurrencyCompact,
   formatPercent,
 } from '../lib/labels.js';
-import { Avatar, Badge, Card, EmptyState, ErrorState, PageHeader, Select, Spinner, StatCard, cx, inputClass } from '../components/ui.jsx';
+import { Avatar, Badge, Card, EmptyState, ErrorState, PageHeader, Select, Spinner, StatCard, Tabs, cx, inputClass } from '../components/ui.jsx';
 
 // Cor única das séries (validada contra o fundo #1a1a1a: faixa de luminosidade, croma e
 // contraste ≥ 3:1). Azul e não o vermelho da marca: em números financeiros o vermelho
@@ -303,6 +303,139 @@ function Leaderboard({ rows, selectedId, onSelect, canSelect, meId, teamSize }) 
 }
 
 // ---------------------------------------------------------------------------
+// Prospecção hoje / esta semana
+// ---------------------------------------------------------------------------
+
+/** Meia-noite de hoje e segunda-feira desta semana, no fuso de quem vê. */
+function prospectingWindows() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const week = new Date(today);
+  week.setDate(week.getDate() - ((week.getDay() + 6) % 7));
+  return { today: today.toISOString(), week: week.toISOString() };
+}
+
+const PROSPECTING_METRICS = [
+  { key: 'contacted', label: 'Leads prospectados', hint: 'Leads distintos marcados como contatados (WhatsApp ou interruptor do Radar)', icon: PhoneCall },
+  { key: 'qualified', label: 'Qualificados', hint: 'Leads enviados para Triagem/Novo no pipeline', icon: Filter },
+  { key: 'won', label: 'Clientes fechados', hint: 'Negócios movidos para Cliente Fechado', icon: Trophy },
+];
+
+function ProspectingBoard({ meId, isManager }) {
+  const [period, setPeriod] = useState('today');
+  // Recalculado a cada render: se o ecrã ficar aberto até depois da meia-noite, a janela avança.
+  const windows = prospectingWindows();
+  const { data, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['metrics', 'prospecting', windows],
+    queryFn: () => getProspecting(windows),
+    placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
+  });
+
+  const suffix = period === 'today' ? '_today' : '_week';
+  const members = data?.data.members ?? [];
+  const rows = [...members]
+    .map((m) => ({ ...m, contacted: m[`contacted${suffix}`], qualified: m[`qualified${suffix}`], won: m[`won${suffix}`] }))
+    .sort((a, b) => b.contacted - a.contacted || b.won - a.won || b.qualified - a.qualified || a.name.localeCompare(b.name));
+  const totals = data?.data.totals;
+  const max = Math.max(1, ...rows.map((r) => r.contacted));
+  const periodLabel = period === 'today' ? 'hoje' : 'esta semana';
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-4 pb-3 sm:px-5">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-white"><Crosshair className="size-4 text-red-500" />Prospecção da equipa</h2>
+          <p className="text-xs text-neutral-500">
+            {isManager ? `Quem mais prospectou ${periodLabel}. Atualiza sozinho a cada minuto.` : `Os seus números ${periodLabel}.`}
+          </p>
+        </div>
+        <Tabs value={period} onChange={setPeriod} options={[{ value: 'today', label: 'Hoje' }, { value: 'week', label: 'Esta semana' }]} />
+      </div>
+
+      {isError ? (
+        <div className="px-4 pb-4 sm:px-5"><ErrorState error={error} onRetry={refetch} /></div>
+      ) : isLoading ? (
+        <div className="px-4 pb-4 sm:px-5"><Spinner label="A carregar prospecção..." /></div>
+      ) : (
+        <>
+          {totals && (
+            <dl className="grid grid-cols-3 border-t border-neutral-800">
+              {PROSPECTING_METRICS.map(({ key, label, hint, icon: Icon }) => (
+                <div key={key} className="border-r border-neutral-800 px-4 py-3 last:border-r-0 sm:px-5" title={hint}>
+                  <dt className="flex items-center gap-1.5 text-xs text-neutral-500"><Icon className="size-3.5 shrink-0" /><span className="truncate">{label}</span></dt>
+                  <dd className="mt-1 text-2xl font-bold text-white tabular-nums">{totals[`${key}${suffix}`]}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead className="border-y border-neutral-800 text-xs text-neutral-500">
+                <tr>
+                  <th scope="col" className="w-12 px-4 py-2.5 font-medium sm:px-5">#</th>
+                  <th scope="col" className="px-2 py-2.5 font-medium">Membro</th>
+                  {PROSPECTING_METRICS.map((m) => (
+                    <th key={m.key} scope="col" className="px-3 py-2.5 text-right font-medium" title={m.hint}>{m.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-800/70">
+                {rows.map((row, index) => {
+                  const idle = !row.contacted && !row.qualified && !row.won;
+                  return (
+                    <tr key={row.user_id} className={cx(row.user_id === meId && 'bg-red-950/15')}>
+                      <td className="px-4 py-3 sm:px-5">
+                        {isManager && !idle ? (
+                          <span className={cx('inline-flex size-6 items-center justify-center rounded-full text-xs font-bold tabular-nums', index === 0 ? 'bg-amber-400/15 text-amber-300 ring-1 ring-amber-400/40' : index <= 2 ? 'bg-neutral-700/60 text-neutral-200' : 'text-neutral-500')}>
+                            {index + 1}
+                          </span>
+                        ) : (
+                          <span className="inline-flex size-6 items-center justify-center text-neutral-600">—</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-3">
+                        <span className="flex items-center gap-2.5">
+                          <Avatar name={row.name} id={row.user_id} size="sm" />
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium text-white">
+                              {row.name}
+                              {row.user_id === meId && <span className="ml-1 text-xs font-normal text-neutral-500">(você)</span>}
+                            </span>
+                            <span className="text-xs text-neutral-500">{ROLE_META[row.role]?.label}{!row.is_active && ' · inativo'}</span>
+                          </span>
+                        </span>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="hidden h-1.5 w-24 rounded-full bg-neutral-800 sm:block" aria-hidden>
+                            {row.contacted > 0 && <div className="h-1.5 rounded-full" style={{ width: `${(row.contacted / max) * 100}%`, background: SERIES }} />}
+                          </div>
+                          <span className={cx('w-8 text-right font-semibold tabular-nums', row.contacted ? 'text-white' : 'text-neutral-600')}>{row.contacted}</span>
+                        </div>
+                      </td>
+                      <td className={cx('px-3 py-3 text-right tabular-nums', row.qualified ? 'text-neutral-200' : 'text-neutral-600')}>{row.qualified}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">
+                        {row.won ? (
+                          <span className="inline-flex items-center gap-1 font-semibold text-emerald-300"><Trophy className="size-3.5" />{row.won}</span>
+                        ) : (
+                          <span className="text-neutral-600">0</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {rows.length === 0 && <p className="px-5 py-6 text-center text-sm text-neutral-500">Sem membros ativos.</p>}
+        </>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Página
 // ---------------------------------------------------------------------------
 
@@ -329,8 +462,12 @@ export default function PerformancePage() {
     <div className="space-y-5">
       <PageHeader
         title="Desempenho comercial"
-        description={isManager ? 'Resultados da equipa e de cada membro no período.' : 'Os seus resultados no período e a sua posição na equipa.'}
+        description={isManager ? 'Prospecção do dia e da semana, e resultados da equipa no período.' : 'A sua prospecção, os seus resultados no período e a sua posição na equipa.'}
       />
+
+      <ProspectingBoard meId={user?.id} isManager={isManager} />
+
+      <h2 className="pt-2 text-sm font-semibold text-neutral-300">Resultados comerciais no período</h2>
 
       {/* Filtros: uma linha, acima de tudo o que eles afetam. */}
       <div className="flex flex-wrap items-center gap-2">

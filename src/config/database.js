@@ -49,6 +49,9 @@ const SCHEMA = [
         grupo              ENUM('COM_SITE', 'SEM_SITE') NOT NULL,
         status_prospeccao  ENUM('NOVO', 'CONTATADO', 'EM_NEGOCIACAO', 'FECHADO', 'DESCARTADO')
                            NOT NULL DEFAULT 'NOVO',
+        is_hidden          TINYINT(1)     NOT NULL DEFAULT 0 COMMENT 'Oculto/arquivado (soft delete)',
+        hidden_at          DATETIME       NULL,
+        hidden_by          INT UNSIGNED   NULL,
         maps_url           VARCHAR(1000)  NULL,
         termo_busca        VARCHAR(255)   NULL,
         chave_dedupe       VARCHAR(255)   NOT NULL COMMENT 'tel:<digitos> ou na:<nome>|<endereco> normalizados',
@@ -60,6 +63,8 @@ const SCHEMA = [
         KEY idx_leads_grupo_status (grupo, status_prospeccao),
         KEY idx_leads_nicho (nicho),
         KEY idx_leads_criado_em (criado_em),
+        KEY idx_leads_visiveis (is_hidden, criado_em),
+        KEY idx_leads_termo_busca (termo_busca),
         CONSTRAINT chk_leads_nota CHECK (nota IS NULL OR nota BETWEEN 0 AND 5)
       ) ENGINE = InnoDB
         DEFAULT CHARSET = utf8mb4
@@ -232,7 +237,7 @@ const SCHEMA = [
         phone                VARCHAR(30)    NULL,
         email                VARCHAR(190)   NULL,
         value                DECIMAL(12,2)  NOT NULL DEFAULT 0,
-        stage                ENUM('lead', 'qualification', 'proposal', 'negotiation', 'won', 'lost') NOT NULL DEFAULT 'lead',
+        stage                ENUM('lead', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead',
         position             INT UNSIGNED   NOT NULL DEFAULT 0 COMMENT 'Ordem dentro do estágio (0 = topo)',
         owner_id             INT UNSIGNED   NULL,
         lead_id              INT UNSIGNED   NULL,
@@ -298,6 +303,63 @@ const SCHEMA = [
   },
 ];
 
+/**
+ * Colunas acrescentadas a tabelas que já existem em produção. CREATE TABLE IF NOT EXISTS não
+ * altera tabelas existentes, por isso cada entrada verifica a coluna e só corre o ALTER se faltar
+ * (idempotente; bancos novos já nascem com ela e saltam o passo).
+ */
+const COLUMN_MIGRATIONS = [
+  {
+    table: 'leads',
+    column: 'is_hidden',
+    name: 'leads: ocultar/arquivar (soft delete)',
+    sql: `
+      ALTER TABLE leads
+        ADD COLUMN is_hidden TINYINT(1) NOT NULL DEFAULT 0 AFTER status_prospeccao,
+        ADD COLUMN hidden_at DATETIME NULL AFTER is_hidden,
+        ADD COLUMN hidden_by INT UNSIGNED NULL AFTER hidden_at,
+        ADD KEY idx_leads_visiveis (is_hidden, criado_em),
+        ADD KEY idx_leads_termo_busca (termo_busca)
+    `,
+  },
+];
+
+/**
+ * Mudanças no tipo de uma coluna existente (ex.: valores de um ENUM). `pending(columnType)` diz se
+ * o banco ainda está no formato antigo; os passos podem ser repetidos sem efeito colateral caso
+ * um boot anterior tenha parado a meio (DDL no MySQL não é transacional).
+ */
+const TYPE_MIGRATIONS = [
+  {
+    table: 'deals',
+    column: 'stage',
+    name: 'deals: estágios Triagem/Novo, Em Negociação, Aguardando Resposta, Fechado, Perdido',
+    pending: (type) => type.includes("'qualification'"),
+    steps: [
+      // 1) ENUM com os valores antigos e novos, para poder remapear.
+      `ALTER TABLE deals MODIFY stage ENUM('lead', 'qualification', 'proposal', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead'`,
+      // 2) Qualificação volta à triagem; proposta enviada = aguardando resposta.
+      `UPDATE deals SET stage = 'lead', updated_at = updated_at WHERE stage = 'qualification'`,
+      `UPDATE deals SET stage = 'awaiting', updated_at = updated_at WHERE stage = 'proposal'`,
+      // 3) Estágios fundidos ficam com posições densas outra vez (0..n-1), como o quadro espera.
+      `UPDATE deals d
+         JOIN (SELECT id, ROW_NUMBER() OVER (PARTITION BY stage ORDER BY position, id) - 1 AS pos FROM deals) x ON x.id = d.id
+          SET d.position = x.pos, d.updated_at = d.updated_at`,
+      // 4) ENUM final.
+      `ALTER TABLE deals MODIFY stage ENUM('lead', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead'`,
+    ],
+  },
+];
+
+async function columnType(table, column) {
+  const row = await db('information_schema.columns')
+    .select({ type: 'column_type' })
+    .whereRaw('table_schema = DATABASE()')
+    .where({ table_name: table, column_name: column })
+    .first();
+  return row?.type ?? null;
+}
+
 // Idempotentes; rodam em todo boot, depois das tabelas.
 const POST_MIGRATIONS = [
   {
@@ -348,6 +410,27 @@ async function migrate(logger) {
     } catch (err) {
       // Ex.: usuário sem permissão de CREATE. Aqui sim o erro é fatal: sem tabela a API não funciona.
       throw new Error(`Falha ao criar a tabela "${table}": ${err.message}`);
+    }
+  }
+
+  for (const { table, column, name, sql } of COLUMN_MIGRATIONS) {
+    if (await db.schema.hasColumn(table, column)) continue;
+    try {
+      await db.raw(sql);
+      logger.info(`Auto-migration: ${name}`);
+    } catch (err) {
+      throw new Error(`Falha na migração "${name}": ${err.message}`);
+    }
+  }
+
+  for (const { table, column, name, pending, steps } of TYPE_MIGRATIONS) {
+    const type = await columnType(table, column);
+    if (!type || !pending(type)) continue;
+    try {
+      for (const sql of steps) await db.raw(sql);
+      logger.info(`Auto-migration: ${name}`);
+    } catch (err) {
+      throw new Error(`Falha na migração "${name}": ${err.message}`);
     }
   }
 

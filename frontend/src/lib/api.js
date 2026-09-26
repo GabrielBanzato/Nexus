@@ -61,19 +61,34 @@ export async function login(email, password) {
 // Leads
 // ---------------------------------------------------------------------------
 
-export function fetchLeads({ nicho, grupo, limit, offset, signal }) {
+/**
+ * Filtros: nicho, grupo (COM_SITE/SEM_SITE), contato ('todos'|'contatados'|'nao_contatados'),
+ * visibilidade ('ativos'|'ocultos'), busca (termo exato de uma pesquisa do Radar).
+ */
+export function fetchLeads({ nicho, grupo, contato, visibilidade, busca, limit, offset, signal }) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (nicho) params.set('nicho', nicho);
   if (grupo) params.set('grupo', grupo);
+  if (contato && contato !== 'todos') params.set('contato', contato);
+  if (visibilidade && visibilidade !== 'ativos') params.set('visibilidade', visibilidade);
+  if (busca) params.set('busca', busca);
   return request(`/api/leads?${params}`, { signal });
 }
 
+/** Pesquisas já feitas no Radar: [{ term, total, visible, last_seen }]. */
+export const fetchLeadSearches = () => request('/api/leads/searches').then((res) => res.data);
+
+/** Ocultar/arquivar (hidden = true) ou restaurar (false). Soft delete: nada é apagado. */
+export function setLeadHidden(id, hidden) {
+  return request(`/api/leads/${id}/visibility`, { method: 'PATCH', body: JSON.stringify({ hidden }) });
+}
+
 /** Busca todas as páginas que batem com os filtros (usado na exportação CSV). */
-export async function fetchAllLeads({ nicho, grupo }) {
+export async function fetchAllLeads(filters) {
   const pageSize = 500; // máximo aceito pela API
   const all = [];
   for (let offset = 0; ; offset += pageSize) {
-    const page = await fetchLeads({ nicho, grupo, limit: pageSize, offset });
+    const page = await fetchLeads({ ...filters, limit: pageSize, offset });
     all.push(...page.data);
     if (page.data.length < pageSize || all.length >= page.total) return all;
   }
@@ -170,6 +185,12 @@ export const deleteDeal = (id) => request(`/api/deals/${id}`, { method: 'DELETE'
 
 // Métricas
 export const getPerformance = (params) => request(`/api/metrics/performance${qs(params)}`);
+/** Prospecção hoje/esta semana. `today`/`week`: inícios das janelas no fuso local (ISO). */
+export const getProspecting = (params) => request(`/api/metrics/prospecting${qs(params)}`);
+
+/** Qualifica o lead: cria o negócio em "Triagem/Novo" no pipeline (responsável = ownerId). */
+export const qualifyLead = (leadId, { ownerId } = {}) =>
+  decideTriageLead(leadId, { status: 'qualified', ...(ownerId ? { deal: { owner_id: ownerId } } : {}) });
 
 // Histórico (entity: 'clients' | 'tickets' | 'deals')
 export const getActivity = (entity, id) => request(`/api/${entity}/${id}/activity`).then(unwrap);

@@ -1,6 +1,6 @@
 import { badRequest } from '../lib/errors.js';
 import { isManager } from '../plugins/auth.js';
-import { getPerformance } from '../repositories/metricsRepository.js';
+import { getPerformance, getProspecting } from '../repositories/metricsRepository.js';
 
 const DAY_MS = 86_400_000;
 const MAX_RANGE_DAYS = 366 * 3;
@@ -13,6 +13,17 @@ const schema = {
       from: { type: 'string', format: 'date' },
       to: { type: 'string', format: 'date' },
       user_id: { type: 'integer', minimum: 1 },
+    },
+  },
+};
+
+const prospectingSchema = {
+  querystring: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      today: { type: 'string', format: 'date-time' },
+      week: { type: 'string', format: 'date-time' },
     },
   },
 };
@@ -53,5 +64,29 @@ export default async function metricsRoutes(app) {
         scope: manager ? (request.query.user_id ? 'user' : 'team') : 'self',
       },
     };
+  });
+
+  /**
+   * Prospecção hoje / esta semana por colaborador. `today` e `week` são os inícios das janelas
+   * no fuso do navegador (ISO 8601); sem eles, usa meia-noite e segunda-feira em UTC.
+   * Agentes recebem só a própria linha (mesma regra do leaderboard).
+   */
+  app.get('/api/metrics/prospecting', { schema: prospectingSchema }, async (request) => {
+    const user = request.currentUser;
+    const now = new Date();
+    const utcMidnight = new Date(now.toISOString().slice(0, 10));
+    const todayStart = request.query.today ? new Date(request.query.today) : utcMidnight;
+    const weekStart = request.query.week
+      ? new Date(request.query.week)
+      : new Date(utcMidnight.getTime() - ((utcMidnight.getUTCDay() + 6) % 7) * DAY_MS);
+    for (const date of [todayStart, weekStart]) {
+      if (Number.isNaN(date.getTime()) || date > now || now - date > 8 * DAY_MS) {
+        throw badRequest('Início de janela inválido (use uma data dos últimos 7 dias).');
+      }
+    }
+
+    const manager = isManager(user);
+    const data = await getProspecting({ todayStart, weekStart, userId: manager ? undefined : user.id });
+    return { data, meta: { today: todayStart.toISOString(), week: weekStart.toISOString(), scope: manager ? 'team' : 'self' } };
   });
 }

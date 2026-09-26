@@ -187,7 +187,7 @@ const TABS = [
 ];
 
 export default function TeamPage() {
-  const { user: me, isAdmin, isManager } = useAuth();
+  const { user: me, isAdmin } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState('active');
@@ -197,7 +197,7 @@ export default function TeamPage() {
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['users', 'list'],
     queryFn: () => listUsers({ limit: 200 }),
-    enabled: isManager,
+    enabled: isAdmin,
   });
 
   const members = useMemo(() => data?.data ?? [], [data]);
@@ -223,8 +223,8 @@ export default function TeamPage() {
     },
   });
 
-  if (!isManager) {
-    return <EmptyState icon={ShieldCheck} title="Acesso restrito" description="A gestão de equipa está disponível para administradores e parceiros." />;
+  if (!isAdmin) {
+    return <EmptyState icon={ShieldCheck} title="Acesso restrito" description="A gestão de equipa está disponível apenas para administradores." />;
   }
 
   return (

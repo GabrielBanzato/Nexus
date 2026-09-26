@@ -120,8 +120,9 @@ export default async function triageRoutes(app) {
     const user = request.currentUser;
     const current = await findTriageByLeadId(request.params.id);
     if (!current) throw notFound('Lead');
-    if (!isManager(user) && current.assigned_to !== user.id) {
-      throw forbidden('Este lead não está na sua fila de triagem.');
+    // Agentes decidem os leads da sua fila e os ainda sem responsável (ex.: qualificados no Radar).
+    if (!isManager(user) && current.assigned_to && current.assigned_to !== user.id) {
+      throw forbidden(`Este lead está na fila de ${current.assigned_to_name ?? 'outro colaborador'}.`);
     }
     const body = { ...request.body };
     if (body.deal && !isManager(user)) delete body.deal.owner_id; // agentes qualificam para si

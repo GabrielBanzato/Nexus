@@ -36,14 +36,15 @@ export const KANBAN_COLUMNS = [
 // --- CRM comercial ----------------------------------------------------------
 
 export const DEAL_STAGES = [
-  { id: 'lead', label: 'Lead', dot: 'bg-neutral-400', probability: 0.1 },
-  { id: 'qualification', label: 'Qualificação', dot: 'bg-sky-400', probability: 0.25 },
-  { id: 'proposal', label: 'Proposta', dot: 'bg-indigo-400', probability: 0.5 },
-  { id: 'negotiation', label: 'Negociação', dot: 'bg-amber-400', probability: 0.75 },
-  { id: 'won', label: 'Fechado', dot: 'bg-emerald-400', probability: 1 },
+  { id: 'lead', label: 'Triagem/Novo', dot: 'bg-sky-400', probability: 0.1 },
+  { id: 'negotiation', label: 'Em Negociação', dot: 'bg-amber-400', probability: 0.4 },
+  { id: 'awaiting', label: 'Aguardando Resposta', dot: 'bg-violet-400', probability: 0.6 },
+  { id: 'won', label: 'Cliente Fechado', dot: 'bg-emerald-400', probability: 1 },
   { id: 'lost', label: 'Perdido', dot: 'bg-red-500', probability: 0 },
 ];
 export const DEAL_STAGE_META = Object.fromEntries(DEAL_STAGES.map((s) => [s.id, s]));
+// Estágios antigos (antes da migração) ainda aparecem no histórico de auditoria.
+const LEGACY_STAGE_LABELS = { qualification: 'Qualificação', proposal: 'Proposta' };
 export const OPEN_DEAL_STAGES = DEAL_STAGES.filter((s) => s.id !== 'won' && s.id !== 'lost');
 
 export const TRIAGE_STATUS_META = {
@@ -66,7 +67,7 @@ export const formatPercent =(value) => (value === null || value === undefined ? 
 /** Texto humano de uma entrada do histórico (activity_logs). */
 export function describeActivity(log) {
   const d = log.details ?? {};
-  const stage = (id) => DEAL_STAGE_META[id]?.label ?? id;
+  const stage = (id) => DEAL_STAGE_META[id]?.label ?? LEGACY_STAGE_LABELS[id] ?? id;
   switch (log.action) {
     case 'note':
       return { title: 'adicionou uma nota', body: d.text, kind: 'note' };
@@ -77,7 +78,7 @@ export function describeActivity(log) {
     case 'deal.stage':
       return { title: `moveu de ${stage(d.from)} para ${stage(d.to)}`, kind: 'move' };
     case 'deal.won':
-      return { title: `fechou o negócio (${stage(d.from)} → Fechado)`, body: d.value ? formatCurrency(d.value) : null, kind: 'won' };
+      return { title: `fechou o negócio (${stage(d.from)} → Cliente Fechado)`, body: d.value ? formatCurrency(d.value) : null, kind: 'won' };
     case 'deal.lost':
       return { title: 'marcou o negócio como perdido', body: d.lost_reason ? `Motivo: ${d.lost_reason}` : null, kind: 'lost' };
     case 'deal.delete':

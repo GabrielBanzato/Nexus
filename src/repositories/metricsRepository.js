@@ -167,3 +167,61 @@ export async function getPerformance({ from, to, userId, leaderboardUserId }) {
 
   return { overview, timeline, funnel, leaderboard, team_size: ranked.length };
 }
+
+/**
+ * Atividade de prospecção por colaborador em duas janelas: hoje e esta semana. Os inícios das
+ * janelas vêm do cliente (meia-noite e segunda-feira no fuso de quem vê o painel).
+ *   contacted → leads distintos que marcou como contatado (WhatsApp ou interruptor do Radar)
+ *   qualified → leads que qualificou (entram em "Triagem/Novo" no pipeline)
+ *   won       → negócios dele que chegaram a "Cliente Fechado"
+ * @param {{ todayStart: Date, weekStart: Date, userId?: number }} params
+ */
+export async function getProspecting({ todayStart, weekStart, userId }) {
+  const since = todayStart < weekStart ? todayStart : weekStart;
+  const fields = ['contacted_today', 'contacted_week', 'qualified_today', 'qualified_week', 'won_today', 'won_week', 'won_value_week'];
+
+  const contacted = db('activity_logs')
+    .select('user_id')
+    .select(db.raw('COUNT(DISTINCT CASE WHEN created_at >= ? THEN entity_id END) AS contacted_today', [todayStart]))
+    .select(db.raw('COUNT(DISTINCT CASE WHEN created_at >= ? THEN entity_id END) AS contacted_week', [weekStart]))
+    .where('action', 'lead.status')
+    .whereRaw("JSON_UNQUOTE(JSON_EXTRACT(details, '$.status')) = 'CONTATADO'")
+    .where('created_at', '>=', since)
+    .groupBy('user_id')
+    .as('ct');
+  const qualified = db('lead_triage')
+    .select('triaged_by')
+    .select(db.raw('SUM(triaged_at >= ?) AS qualified_today', [todayStart]))
+    .select(db.raw('SUM(triaged_at >= ?) AS qualified_week', [weekStart]))
+    .where('status', 'qualified')
+    .where('triaged_at', '>=', since)
+    .groupBy('triaged_by')
+    .as('ql');
+  const won = db('deals')
+    .select('owner_id')
+    .select(db.raw('SUM(won_at >= ?) AS won_today', [todayStart]))
+    .select(db.raw('SUM(won_at >= ?) AS won_week', [weekStart]))
+    .select(db.raw('SUM(CASE WHEN won_at >= ? THEN value ELSE 0 END) AS won_value_week', [weekStart]))
+    .where('won_at', '>=', since)
+    .groupBy('owner_id')
+    .as('wn');
+
+  const rows = await db('users as u')
+    .leftJoin(contacted, 'ct.user_id', 'u.id')
+    .leftJoin(qualified, 'ql.triaged_by', 'u.id')
+    .leftJoin(won, 'wn.owner_id', 'u.id')
+    .where((w) => w.where('u.is_active', true).orWhereNotNull('ct.user_id').orWhereNotNull('ql.triaged_by').orWhereNotNull('wn.owner_id'))
+    .select('u.id as user_id', 'u.name', 'u.role', 'u.is_active', ...fields)
+    .orderBy('u.name');
+
+  const members = rows.map((row) => ({
+    user_id: row.user_id,
+    name: row.name,
+    role: row.role,
+    is_active: Boolean(row.is_active),
+    ...Object.fromEntries(fields.map((f) => [f, num(row[f])])),
+  }));
+
+  const totals = Object.fromEntries(fields.map((f) => [f, members.reduce((sum, m) => sum + m[f], 0)]));
+  return { members: userId ? members.filter((m) => m.user_id === userId) : members, totals: userId ? null : totals };
+}

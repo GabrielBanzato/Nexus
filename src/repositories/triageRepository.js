@@ -41,6 +41,8 @@ const COLUMNS = [
 
 function applyFilters(query, { status, assignedTo, q, nicho, grupo }) {
   if (status) query.where('t.status', status);
+  // Leads ocultos (arquivados na Prospecção) saem da fila ativa e da distribuição.
+  if (status === 'pending' || status === 'on_hold') query.where('l.is_hidden', false);
   if (assignedTo === 'none') query.whereNull('t.assigned_to');
   else if (assignedTo) query.where('t.assigned_to', assignedTo);
   if (nicho) query.where('l.nicho', 'like', `%${escapeLike(nicho)}%`);
@@ -75,22 +77,35 @@ export async function listTriage(filters) {
 
 /** Contagem por estado (no escopo informado) e carga pendente por responsável. */
 export async function getTriageSummary({ assignedTo } = {}) {
-  const byStatus = db('lead_triage as t').select('t.status').count({ total: '*' }).groupBy('t.status');
+  // Na fila ativa (pendente/em espera) não contam leads ocultos na Prospecção.
+  const visibleInQueue = (qb) =>
+    qb.where((w) => w.whereNotIn('t.status', ACTIVE_STATUSES).orWhere('l.is_hidden', false));
+
+  const byStatus = db('lead_triage as t')
+    .join('leads as l', 'l.id', 't.lead_id')
+    .modify(visibleInQueue)
+    .select('t.status')
+    .count({ total: '*' })
+    .groupBy('t.status');
   if (assignedTo) byStatus.where('t.assigned_to', assignedTo);
 
   const counts = Object.fromEntries(TRIAGE_STATUSES.map((s) => [s, 0]));
   for (const row of await byStatus) counts[row.status] = Number(row.total);
 
-  const [{ total: unassigned }] = await db('lead_triage').where({ status: 'pending' }).whereNull('assigned_to').count({ total: '*' });
+  const [{ total: unassigned }] = await db('lead_triage as t')
+    .join('leads as l', 'l.id', 't.lead_id')
+    .where({ 't.status': 'pending', 'l.is_hidden': false })
+    .whereNull('t.assigned_to')
+    .count({ total: '*' });
 
   const workload = await db('users as u')
     .leftJoin('lead_triage as t', function joinActive() {
       this.on('t.assigned_to', 'u.id').andOnIn('t.status', ACTIVE_STATUSES);
     })
+    .leftJoin('leads as l', 'l.id', 't.lead_id')
     .where('u.is_active', true)
     .groupBy('u.id', 'u.name', 'u.role')
-    .select('u.id', 'u.name', 'u.role')
-    .count({ open: 't.lead_id' })
+    .select('u.id', 'u.name', 'u.role', db.raw('SUM(l.is_hidden = 0) AS open'))
     .orderBy('u.name');
 
   return {
@@ -120,12 +135,14 @@ export function distributeLeads({ userIds, limit, nicho, grupo, strategy }) {
     const leadIds = (await candidates).map((row) => row.lead_id);
     if (!leadIds.length) return { assigned: 0, perUser: {} };
 
-    const loadRows = await trx('lead_triage')
-      .select('assigned_to')
+    const loadRows = await trx('lead_triage as t')
+      .join('leads as l', 'l.id', 't.lead_id')
+      .select('t.assigned_to')
       .count({ total: '*' })
-      .whereIn('assigned_to', userIds)
-      .whereIn('status', ACTIVE_STATUSES)
-      .groupBy('assigned_to');
+      .whereIn('t.assigned_to', userIds)
+      .whereIn('t.status', ACTIVE_STATUSES)
+      .where('l.is_hidden', false)
+      .groupBy('t.assigned_to');
     const load = new Map(userIds.map((id) => [id, 0]));
     for (const row of loadRows) load.set(row.assigned_to, Number(row.total));
 

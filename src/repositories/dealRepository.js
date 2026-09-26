@@ -2,22 +2,33 @@ import { db } from '../config/database.js';
 import { notFound } from '../lib/errors.js';
 import { createOrderedBoard } from '../lib/orderedBoard.js';
 
-export const DEAL_STAGES = ['lead', 'qualification', 'proposal', 'negotiation', 'won', 'lost'];
-export const OPEN_STAGES = ['lead', 'qualification', 'proposal', 'negotiation'];
+// lead = "Triagem/Novo" (entrada dos leads qualificados no Radar), awaiting = "Aguardando Resposta".
+export const DEAL_STAGES = ['lead', 'negotiation', 'awaiting', 'won', 'lost'];
+export const OPEN_STAGES = ['lead', 'negotiation', 'awaiting'];
 export const DEAL_FIELDS = ['title', 'company', 'contact_name', 'phone', 'email', 'value', 'owner_id', 'client_id', 'expected_close_date'];
 
 /** Probabilidade de fecho por estágio, para a previsão ponderada do pipeline. */
-export const STAGE_PROBABILITY = { lead: 0.1, qualification: 0.25, proposal: 0.5, negotiation: 0.75, won: 1, lost: 0 };
+export const STAGE_PROBABILITY = { lead: 0.1, negotiation: 0.4, awaiting: 0.6, won: 1, lost: 0 };
 
 const board = createOrderedBoard({ table: 'deals', columnField: 'stage', notFound: () => notFound('Negócio') });
 
 const escapeLike = (value) => value.replace(/[\\%_]/g, (char) => `\\${char}`);
 
+// Notas do negócio (activity_logs action = 'note'): contagem e a mais recente, para o cartão do quadro.
+const NOTES = "FROM activity_logs n WHERE n.entity_type = 'deal' AND n.entity_id = d.id AND n.action = 'note'";
+
 function withNames(query) {
   return query
     .leftJoin('users as o', 'o.id', 'd.owner_id')
     .leftJoin('clients as c', 'c.id', 'd.client_id')
-    .select('d.*', 'o.name as owner_name', 'c.name as client_name');
+    .select(
+      'd.*',
+      'o.name as owner_name',
+      'c.name as client_name',
+      db.raw(`(SELECT COUNT(*) ${NOTES}) AS notes_count`),
+      db.raw(`(SELECT JSON_UNQUOTE(JSON_EXTRACT(n.details, '$.text')) ${NOTES} ORDER BY n.id DESC LIMIT 1) AS last_note`),
+      db.raw(`(SELECT n.created_at ${NOTES} ORDER BY n.id DESC LIMIT 1) AS last_note_at`),
+    );
 }
 
 export function findDealById(id) {

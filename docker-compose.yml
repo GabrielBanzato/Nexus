@@ -51,7 +51,7 @@ services:
       HOST: 0.0.0.0
       LOG_LEVEL: ${LOG_LEVEL:-info}
       MYSQL_HOST: db
-      MYSQL_PORT: 3306
+      MYSQL_PORT: 3307
       MYSQL_DATABASE: ${MYSQL_DATABASE:-nexus}
       MYSQL_USER: ${MYSQL_USER:-nexus}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}

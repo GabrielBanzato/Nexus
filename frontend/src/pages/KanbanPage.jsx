@@ -1,17 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  DndContext,
-  DragOverlay,
-  KeyboardSensor,
-  PointerSensor,
-  TouchSensor,
-  closestCorners,
-  useDroppable,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
-import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { DndContext, DragOverlay, useDroppable } from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ArrowRightLeft, Clock, Plus, Trash2, UserRound } from 'lucide-react';
 import {
@@ -24,6 +14,7 @@ import {
 import { useAuth } from '../lib/auth.jsx';
 import { useUserDirectory } from '../lib/hooks.js';
 import { KANBAN_COLUMNS, formatRelative } from '../lib/labels.js';
+import { useBoardDnd } from '../lib/useBoardDnd.js';
 import { useToast } from '../components/toast.jsx';
 import {
   Avatar,
@@ -41,66 +32,6 @@ import {
 } from '../components/ui.jsx';
 
 const COLUMN_IDS = KANBAN_COLUMNS.map((c) => c.id);
-const EMPTY_BOARD = Object.fromEntries(COLUMN_IDS.map((id) => [id, []]));
-
-// ---------------------------------------------------------------------------
-// Helpers de posição
-// ---------------------------------------------------------------------------
-
-/** Coluna que contém o item (ou o próprio id, se for uma coluna). */
-function findColumn(board, id) {
-  if (COLUMN_IDS.includes(id)) return id;
-  return COLUMN_IDS.find((column) => board[column].some((task) => task.id === id));
-}
-
-function locate(board, id) {
-  const column = findColumn(board, id);
-  const index = column ? board[column].findIndex((task) => task.id === id) : -1;
-  return { column, index, task: column ? board[column][index] : null };
-}
-
-/**
- * Posição a enviar ao backend. O backend espera o índice na coluna completa (excluindo a
- * própria tarefa); com o filtro "Só as minhas", o índice na tela não é o índice real, então
- * calcula-se a partir das posições do servidor dos vizinhos onde o cartão foi solto.
- */
-function serverTargetPosition(list, index, origin) {
-  const withoutSelf = (task) =>
-    task.position - (origin.column === task.column_name && origin.position < task.position ? 1 : 0);
-  const above = list[index - 1];
-  const below = list[index + 1];
-  if (above) return withoutSelf(above) + 1;
-  if (below) return withoutSelf(below);
-  return 0;
-}
-
-/**
- * Teclado no quadro: ←/→ saltam para a coluna vizinha (mantendo a altura do cartão);
- * ↑/↓ usam o comportamento padrão do sortable dentro da coluna.
- * O padrão do dnd-kit considera qualquer alvo "mais à direita" — com colunas, isso
- * incluía cartões da mesma coluna.
- */
-function boardKeyboardCoordinates(event, args) {
-  const horizontal = event.code === 'ArrowLeft' || event.code === 'ArrowRight';
-  if (!horizontal) return sortableKeyboardCoordinates(event, args);
-
-  const { collisionRect, droppableRects } = args.context;
-  if (!collisionRect) return undefined;
-  event.preventDefault();
-
-  const centerX = collisionRect.left + collisionRect.width / 2;
-  const columns = COLUMN_IDS.map((id) => ({ id, rect: droppableRects.get(id) })).filter((c) => c.rect);
-  const distance = (c) => Math.abs(c.rect.left + c.rect.width / 2 - centerX);
-  const current = columns.reduce((best, c) => (distance(c) < distance(best) ? c : best), columns[0]);
-  const target = columns[columns.indexOf(current) + (event.code === 'ArrowRight' ? 1 : -1)];
-  if (!target) return undefined;
-
-  return {
-    x: target.rect.left + (target.rect.width - collisionRect.width) / 2,
-    y: Math.min(Math.max(collisionRect.top, target.rect.top), Math.max(target.rect.top, target.rect.bottom - collisionRect.height)),
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Cartão
 // ---------------------------------------------------------------------------
@@ -235,6 +166,7 @@ function KanbanColumn({ column, tasks, onOpen, onAdd }) {
   return (
     <section
       aria-label={column.label}
+      data-board-column={column.id}
       className="flex w-[82vw] max-w-80 shrink-0 snap-start flex-col rounded-2xl border border-neutral-800 bg-[#161616] sm:w-72 lg:w-auto lg:max-w-none lg:min-w-0"
     >
       <header className="flex items-center justify-between px-3 pt-3 pb-2">
@@ -407,16 +339,7 @@ export default function KanbanPage() {
     queryFn: () => getKanbanBoard({ mine }),
   });
 
-  // Cópia local do quadro: é ela que muda em tempo real durante o arrasto.
-  const [board, setBoard] = useState(EMPTY_BOARD);
-  const [activeId, setActiveId] = useState(null);
-  const dragOrigin = useRef(null);
   const [editingId, setEditingId] = useState(null);
-
-  useEffect(() => {
-    if (data && activeId === null) setBoard(data);
-  }, [data, activeId]);
-
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['kanban'] });
 
   const moveMutation = useMutation({
@@ -451,95 +374,20 @@ export default function KanbanPage() {
     onError: (err) => toast.error('Não foi possível apagar', err.message),
   });
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), // clique curto = abrir
-    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }), // toque longo = arrastar
-    useSensor(KeyboardSensor, {
-      coordinateGetter: boardKeyboardCoordinates,
-      keyboardCodes: { start: ['Space'], cancel: ['Escape'], end: ['Space', 'Enter'] },
-    }),
-  );
 
-  const handleDragStart = ({ active }) => {
-    const origin = locate(board, active.id);
-    dragOrigin.current = { snapshot: board, column: origin.column, index: origin.index, position: origin.task.position };
-    setActiveId(active.id);
-  };
-
-  // Passa o cartão para a outra coluna enquanto é arrastado (feedback imediato).
-  const handleDragOver = ({ active, over }) => {
-    if (!over) return;
-    setBoard((prev) => {
-      const from = findColumn(prev, active.id);
-      const to = findColumn(prev, over.id);
-      if (!from || !to || from === to) return prev;
-
-      const fromItems = prev[from];
-      const toItems = prev[to];
-      const moving = fromItems.find((t) => t.id === active.id);
-      let index = toItems.length;
-      if (!COLUMN_IDS.includes(over.id)) {
-        const overIndex = toItems.findIndex((t) => t.id === over.id);
-        const below =
-          active.rect.current.translated && active.rect.current.translated.top > over.rect.top + over.rect.height / 2;
-        index = overIndex >= 0 ? overIndex + (below ? 1 : 0) : toItems.length;
-      }
-
-      return {
-        ...prev,
-        [from]: fromItems.filter((t) => t.id !== active.id),
-        [to]: [...toItems.slice(0, index), moving, ...toItems.slice(index)],
-      };
-    });
-  };
-
-  const handleDragEnd = ({ active, over }) => {
-    const origin = dragOrigin.current;
-    setActiveId(null);
-    if (!over || !origin) {
-      setBoard(origin?.snapshot ?? board);
-      return;
-    }
-
-    let next = board;
-    const column = findColumn(next, active.id);
-    const overColumn = findColumn(next, over.id);
-    if (column === overColumn) {
-      const oldIndex = next[column].findIndex((t) => t.id === active.id);
-      const newIndex = COLUMN_IDS.includes(over.id)
-        ? next[column].length - 1
-        : next[column].findIndex((t) => t.id === over.id);
-      if (newIndex >= 0 && oldIndex !== newIndex) next = { ...next, [column]: arrayMove(next[column], oldIndex, newIndex) };
-    }
-
-    const index = next[column].findIndex((t) => t.id === active.id);
-    if (column === origin.column && index === origin.index) {
-      setBoard(origin.snapshot);
-      return;
-    }
-
-    const position = serverTargetPosition(next[column], index, origin);
-    // Atualização otimista: grava no cache, o efeito acima sincroniza o quadro local.
-    next = {
-      ...next,
-      [column]: next[column].map((t) => (t.id === active.id ? { ...t, column_name: column } : t)),
-    };
-    if (!mine) {
-      // Sem filtro o quadro está completo: as posições passam a ser os próprios índices.
-      next = Object.fromEntries(Object.entries(next).map(([col, list]) => [col, list.map((t, i) => ({ ...t, position: i }))]));
-    }
-    queryClient.setQueryData(boardKey, next);
-    setBoard(next);
-    moveMutation.mutate({ id: active.id, column_name: column, position, snapshot: origin.snapshot });
-  };
-
-  const handleDragCancel = () => {
-    setActiveId(null);
-    if (dragOrigin.current) setBoard(dragOrigin.current.snapshot);
-  };
+  // Arrasto: lógica partilhada com o pipeline (lib/useBoardDnd.js).
+  const { board, sensors, collisionDetection, activeItem: activeTask, handlers } = useBoardDnd({
+    columnIds: COLUMN_IDS,
+    serverBoard: data,
+    columnField: 'column_name',
+    filtered: mine,
+    onDrop: ({ id, column, position, next, snapshot }) => {
+      queryClient.setQueryData(boardKey, next); // otimista
+      moveMutation.mutate({ id, column_name: column, position, snapshot });
+    },
+  });
 
   const allTasks = Object.values(board).flat();
-  const activeTask = activeId ? allTasks.find((t) => t.id === activeId) : null;
   const editingTask = editingId ? allTasks.find((t) => t.id === editingId) : null;
   const doneCount = board.done.length;
   const progress = allTasks.length ? Math.round((doneCount / allTasks.length) * 100) : 0;
@@ -584,11 +432,8 @@ export default function KanbanPage() {
       ) : (
         <DndContext
           sensors={sensors}
-          collisionDetection={closestCorners}
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDragEnd={handleDragEnd}
-          onDragCancel={handleDragCancel}
+          collisionDetection={collisionDetection}
+          {...handlers}
           accessibility={{
             screenReaderInstructions: {
               draggable: 'Prima Espaço para pegar na tarefa, setas para mover e Espaço para largar. Escape cancela.',

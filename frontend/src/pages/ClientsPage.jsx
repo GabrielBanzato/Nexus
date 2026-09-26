@@ -25,7 +25,9 @@ import {
   apiErrorToForm,
   cx,
   inputClass,
+  Tabs,
 } from '../components/ui.jsx';
+import ActivityTimeline from '../components/ActivityTimeline.jsx';
 
 const PAGE_SIZE = 20;
 const STATUS_TABS = [{ value: '', label: 'Todos' }, ...Object.entries(CLIENT_STATUS_META).map(([value, m]) => ({ value, label: m.label }))];
@@ -50,6 +52,7 @@ function ClientFormModal({ client, onClose }) {
     responsible_id: client?.responsible_id ?? user?.id ?? '',
   });
   const [errors, setErrors] = useState({});
+  const [tab, setTab] = useState('details');
 
   const mutation = useMutation({
     mutationFn: (body) => (isEdit ? updateClient(client.id, body) : createClient(body)),
@@ -91,17 +94,31 @@ function ClientFormModal({ client, onClose }) {
       onClose={onClose}
       title={isEdit ? 'Editar cliente' : 'Novo cliente'}
       description={isEdit ? `Atualizado ${formatRelative(client.updated_at)}` : 'Registe um cliente conquistado ou em negociação.'}
+      size={isEdit ? 'lg' : 'md'}
       footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>
-            Cancelar
-          </Button>
-          <Button type="submit" form="client-form" loading={mutation.isPending}>
-            {isEdit ? 'Guardar alterações' : 'Adicionar cliente'}
-          </Button>
-        </>
+        tab === 'details' && (
+          <>
+            <Button variant="ghost" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button type="submit" form="client-form" loading={mutation.isPending}>
+              {isEdit ? 'Guardar alterações' : 'Adicionar cliente'}
+            </Button>
+          </>
+        )
       }
     >
+      {isEdit && (
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          className="-mt-1 mb-4"
+          options={[{ value: 'details', label: 'Detalhes' }, { value: 'activity', label: 'Histórico' }]}
+        />
+      )}
+      {tab === 'activity' ? (
+        <ActivityTimeline entity="clients" id={client.id} primaryType="client" />
+      ) : (
       <form id="client-form" onSubmit={submit} className="space-y-4" noValidate>
         {errors.form && <p className="rounded-xl bg-red-950/40 px-3 py-2 text-sm text-red-300">{errors.form}</p>}
         <div className="grid gap-4 sm:grid-cols-2">
@@ -142,6 +159,7 @@ function ClientFormModal({ client, onClose }) {
           </Field>
         </div>
       </form>
+      )}
     </Modal>
   );
 }

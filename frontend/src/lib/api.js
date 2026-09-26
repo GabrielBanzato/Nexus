@@ -148,3 +148,29 @@ export const createKanbanTask = (body) => request('/api/kanban/tasks', json('POS
 export const updateKanbanTask = (id, body) => request(`/api/kanban/tasks/${id}`, json('PATCH', body)).then(unwrap);
 export const moveKanbanTask = (id, body) => request(`/api/kanban/tasks/${id}/move`, json('PATCH', body)).then(unwrap);
 export const deleteKanbanTask = (id) => request(`/api/kanban/tasks/${id}`, { method: 'DELETE' });
+
+// ---------------------------------------------------------------------------
+// CRM comercial
+// ---------------------------------------------------------------------------
+
+// Triagem
+export const listTriage = (params) => request(`/api/triage${qs(params)}`);
+export const getTriageSummary = () => request('/api/triage/summary').then(unwrap);
+export const distributeLeads = (body) => request('/api/triage/distribute', json('POST', body)).then(unwrap);
+export const assignTriageLead = (leadId, assignedTo) =>
+  request(`/api/triage/${leadId}/assign`, json('PATCH', { assigned_to: assignedTo })).then(unwrap);
+export const decideTriageLead = (leadId, body) => request(`/api/triage/${leadId}/decision`, json('POST', body)).then(unwrap);
+
+// Pipeline
+export const getDealBoard = (params) => request(`/api/deals/board${qs(params)}`);
+export const createDeal = (body) => request('/api/deals', json('POST', body)).then(unwrap);
+export const updateDeal = (id, body) => request(`/api/deals/${id}`, json('PATCH', body)).then(unwrap);
+export const moveDeal = (id, body) => request(`/api/deals/${id}/move`, json('PATCH', body));
+export const deleteDeal = (id) => request(`/api/deals/${id}`, { method: 'DELETE' });
+
+// Métricas
+export const getPerformance = (params) => request(`/api/metrics/performance${qs(params)}`);
+
+// Histórico (entity: 'clients' | 'tickets' | 'deals')
+export const getActivity = (entity, id) => request(`/api/${entity}/${id}/activity`).then(unwrap);
+export const addNote = (entity, id, text) => request(`/api/${entity}/${id}/notes`, json('POST', { text }));

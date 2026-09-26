@@ -7,6 +7,7 @@ import { AuthProvider } from './lib/auth.jsx';
 import { queryClient } from './lib/queryClient.js';
 import {
   SESSION_EXPIRED_EVENT,
+  TOKEN_STORAGE_KEY,
   clearToken,
   getToken,
   getTokenExpiry,
@@ -34,6 +35,20 @@ export default function App() {
     };
     window.addEventListener(SESSION_EXPIRED_EVENT, handleExpired);
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleExpired);
+  }, []);
+
+  // Login/logout noutra aba: o localStorage é partilhado, então esta aba adota a nova sessão
+  // (sem isto ficaria com a interface de um utilizador e os dados de outro).
+  useEffect(() => {
+    const handleStorage = (event) => {
+      if (event.key !== TOKEN_STORAGE_KEY && event.key !== null) return;
+      const next = getToken();
+      queryClient.clear();
+      setToken(next);
+      setNotice(next ? null : 'A sessão foi terminada noutra aba.');
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
   // Encerra a sessão no momento exato em que o token expira, mesmo sem requisições.

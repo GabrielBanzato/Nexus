@@ -4,6 +4,7 @@
  */
 
 const TOKEN_KEY = 'nexus:token';
+export const TOKEN_STORAGE_KEY = TOKEN_KEY;
 export const SESSION_EXPIRED_EVENT = 'nexus:session-expired';
 
 // Margem para não usar um token que expira durante a requisição.

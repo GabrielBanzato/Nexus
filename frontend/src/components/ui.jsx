@@ -188,9 +188,8 @@ export function apiErrorToForm(error) {
 // Modal
 // ---------------------------------------------------------------------------
 
-export function Modal({ open, onClose, title, description, children, footer, size = 'md' }) {
-  const titleId = useId();
-  const panelRef = useRef(null);
+/** Comportamento de diálogo: Esc fecha, Tab fica preso no painel, foco inicial e retorno do foco. */
+function useDialogBehavior(open, panelRef, onClose) {
   // Ref: onClose costuma ser uma arrow inline; como dependência, o efeito reexecutaria a cada
   // render e roubaria o foco do campo que o utilizador está a editar.
   const onCloseRef = useRef(onClose);
@@ -234,7 +233,13 @@ export function Modal({ open, onClose, title, description, children, footer, siz
       document.body.style.overflow = previousOverflow;
       previousFocus?.focus?.();
     };
-  }, [open]);
+  }, [open, panelRef]);
+}
+
+export function Modal({ open, onClose, title, description, children, footer, size = 'md' }) {
+  const titleId = useId();
+  const panelRef = useRef(null);
+  useDialogBehavior(open, panelRef, onClose);
 
   if (!open) return null;
 
@@ -268,6 +273,69 @@ export function Modal({ open, onClose, title, description, children, footer, siz
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-neutral-800 px-5 py-3.5">{footer}</div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Painel lateral (detalhe de registos longos, com histórico). Em telemóvel ocupa o ecrã. */
+export function Drawer({ open, onClose, title, subtitle, actions, children, footer }) {
+  const titleId = useId();
+  const panelRef = useRef(null);
+  useDialogBehavior(open, panelRef, onClose);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
+      <aside
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="relative flex h-full w-full flex-col border-l border-neutral-800 bg-[#1a1a1a] shadow-2xl shadow-black/60 outline-none sm:max-w-xl"
+      >
+        <header className="flex items-start gap-3 border-b border-neutral-800 px-5 py-4">
+          <div className="min-w-0 flex-1">
+            <h2 id={titleId} className="truncate text-base font-semibold text-white">
+              {title}
+            </h2>
+            {subtitle && <div className="mt-1 text-sm text-neutral-400">{subtitle}</div>}
+          </div>
+          {actions}
+          <IconButton icon={X} label="Fechar" onClick={onClose} />
+        </header>
+        <div className="flex-1 overflow-y-auto">{children}</div>
+        {footer && <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-neutral-800 px-5 py-3.5">{footer}</footer>}
+      </aside>
+    </div>
+  );
+}
+
+/** Abas simples (sublinhado vermelho). options: [{ value, label, count? }] */
+export function Tabs({ value, onChange, options, className }) {
+  return (
+    <div role="tablist" className={cx('flex gap-1 border-b border-neutral-800', className)}>
+      {options.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(option.value)}
+            className={cx(
+              '-mb-px border-b-2 px-3 py-2 text-sm font-medium transition',
+              active ? 'border-red-600 text-white' : 'border-transparent text-neutral-400 hover:text-neutral-200',
+            )}
+          >
+            {option.label}
+            {option.count !== undefined && <span className="ml-1.5 text-xs text-neutral-500 tabular-nums">{option.count}</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -335,7 +403,7 @@ export function StatCard({ label, value, icon: Icon, tone = 'neutral', loading }
         {loading ? (
           <span className="mt-1 block h-6 w-10 animate-pulse rounded bg-neutral-800" />
         ) : (
-          <p className="text-xl font-bold text-white tabular-nums">{value}</p>
+          <p className="truncate text-xl font-bold text-white">{value}</p>
         )}
       </div>
     </Card>

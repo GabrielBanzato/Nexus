@@ -26,7 +26,9 @@ import {
   apiErrorToForm,
   cx,
   inputClass,
+  Tabs,
 } from '../components/ui.jsx';
+import ActivityTimeline from '../components/ActivityTimeline.jsx';
 
 const PAGE_SIZE = 25;
 
@@ -58,6 +60,7 @@ function TicketModal({ ticket, onClose, canEdit, canDelete }) {
   });
   const [errors, setErrors] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [tab, setTab] = useState('details');
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['tickets'] });
 
@@ -116,6 +119,7 @@ function TicketModal({ ticket, onClose, canEdit, canDelete }) {
             : 'Descreva o problema ou pedido do cliente.'
         }
         footer={
+          tab === 'details' && (
           <>
             {isEdit && canDelete && (
               <Button variant="danger" icon={Trash2} onClick={() => setConfirmDelete(true)} className="mr-auto">
@@ -131,8 +135,20 @@ function TicketModal({ ticket, onClose, canEdit, canDelete }) {
               </Button>
             )}
           </>
+          )
         }
       >
+        {isEdit && (
+          <Tabs
+            value={tab}
+            onChange={setTab}
+            className="-mt-1 mb-4"
+            options={[{ value: 'details', label: 'Detalhes' }, { value: 'activity', label: 'Histórico' }]}
+          />
+        )}
+        {tab === 'activity' ? (
+          <ActivityTimeline entity="tickets" id={ticket.id} primaryType="ticket" />
+        ) : (
         <form id="ticket-form" onSubmit={submit} className="space-y-4" noValidate>
           {readOnly && (
             <p className="rounded-xl bg-neutral-800/60 px-3 py-2 text-sm text-neutral-400">
@@ -191,6 +207,7 @@ function TicketModal({ ticket, onClose, canEdit, canDelete }) {
             </div>
           </fieldset>
         </form>
+        )}
       </Modal>
 
       <ConfirmDialog

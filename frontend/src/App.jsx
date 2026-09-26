@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import Dashboard from './Dashboard.jsx';
+import { QueryClientProvider } from '@tanstack/react-query';
+import AppShell from './components/AppShell.jsx';
+import { ToastProvider } from './components/toast.jsx';
 import Login from './Login.jsx';
+import { AuthProvider } from './lib/auth.jsx';
+import { queryClient } from './lib/queryClient.js';
 import {
   SESSION_EXPIRED_EVENT,
   clearToken,
@@ -21,9 +25,10 @@ export default function App() {
   const [token, setToken] = useState(() => getToken());
   const [notice, setNotice] = useState(null);
 
-  // Qualquer 401 da API (token expirado/revogado) derruba a sessão.
+  // Qualquer 401 da API (token expirado/revogado, conta desativada) derruba a sessão.
   useEffect(() => {
     const handleExpired = () => {
+      queryClient.clear();
       setToken(null);
       setNotice('Sua sessão expirou. Entre novamente para continuar.');
     };
@@ -41,6 +46,7 @@ export default function App() {
   }, [token]);
 
   const handleLogin = useCallback((newToken) => {
+    queryClient.clear(); // nunca reaproveitar cache de outra sessão
     saveToken(newToken);
     setNotice(null);
     setToken(newToken);
@@ -48,13 +54,20 @@ export default function App() {
 
   const handleLogout = useCallback(() => {
     clearToken();
+    queryClient.clear();
     setNotice(null);
     setToken(null);
   }, []);
 
   return (
-    <ProtectedRoute token={token} fallback={<Login onSuccess={handleLogin} notice={notice} />}>
-      <Dashboard onLogout={handleLogout} />
-    </ProtectedRoute>
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <ProtectedRoute token={token} fallback={<Login onSuccess={handleLogin} notice={notice} />}>
+          <AuthProvider onLogout={handleLogout}>
+            <AppShell />
+          </AuthProvider>
+        </ProtectedRoute>
+      </ToastProvider>
+    </QueryClientProvider>
   );
 }

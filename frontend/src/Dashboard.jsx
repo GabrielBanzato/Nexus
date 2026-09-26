@@ -6,7 +6,6 @@ import {
   Crosshair,
   Download,
   Handshake,
-  LogOut,
   Trophy,
   Ban,
   Globe,
@@ -212,21 +211,14 @@ function SelectChevron() {
 // Componentes de UI
 // ---------------------------------------------------------------------------
 
-function Header({ loaded, total, counts, isLoading, onExport, exporting, onLogout }) {
+/** Cabeçalho da página de prospecção (a marca e o "Sair" ficam na navegação global). */
+function Header({ loaded, total, counts, isLoading, onExport, exporting }) {
   return (
-    <header className="sticky top-0 z-30 border-b border-red-950/80 bg-[#1a1a1a]/90 backdrop-blur-md">
-      <div className="h-0.5 bg-linear-to-r from-red-950 via-red-700 to-red-950" />
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-linear-to-br from-red-700 to-red-950 text-white shadow-lg shadow-red-950/60 ring-1 ring-red-600/30">
-            <Radar className="size-5" />
-          </div>
-          <div className="leading-tight">
-            <h1 className="text-lg font-bold tracking-tight text-white">
-              Nexus<span className="text-red-600">.</span>
-            </h1>
-            <p className="text-xs font-medium text-neutral-500">Radar de Prospecção</p>
-          </div>
+    <header>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-white sm:text-2xl">Prospecção</h1>
+          <p className="mt-1 text-sm text-neutral-400">Leads extraídos do Google Maps, prontos para abordagem.</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -260,15 +252,6 @@ function Header({ loaded, total, counts, isLoading, onExport, exporting, onLogou
           >
             {exporting ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}
             Exportar Leads (CSV)
-          </button>
-          <button
-            type="button"
-            onClick={onLogout}
-            title="Sair"
-            aria-label="Sair"
-            className="inline-flex size-9 items-center justify-center rounded-xl text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
-          >
-            <LogOut className="size-4" />
           </button>
         </div>
       </div>
@@ -709,7 +692,7 @@ function Toast({ toast, onClose }) {
 // Dashboard
 // ---------------------------------------------------------------------------
 
-export default function Dashboard({ onLogout }) {
+export default function Dashboard() {
   const [nicho, setNicho] = useState('');
   const [grupo, setGrupo] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
@@ -875,7 +858,7 @@ export default function Dashboard({ onLogout }) {
   const hasMore = status === 'success' && leads.length < total;
 
   return (
-    <div className="min-h-screen bg-[#111111] bg-[radial-gradient(ellipse_80%_40%_at_50%_-10%,rgba(127,29,29,0.18),transparent)]">
+    <div>
       <Header
         loaded={leads.length}
         total={total}
@@ -883,10 +866,9 @@ export default function Dashboard({ onLogout }) {
         isLoading={isLoading}
         onExport={handleExport}
         exporting={exporting}
-        onLogout={onLogout}
       />
 
-      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mt-6 space-y-6">
         <RadarSearch job={job} isBusy={isScraping} onStart={startScrapeJob} />
 
         <FiltersBar
@@ -963,7 +945,7 @@ export default function Dashboard({ onLogout }) {
             </button>
           </div>
         )}
-      </main>
+      </div>
 
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>

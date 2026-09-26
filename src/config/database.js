@@ -11,7 +11,8 @@ export const db = knex({
     database: config.db.database,
     charset: 'utf8mb4',
     timezone: 'Z', // datas sempre em UTC entre Node e MySQL
-    decimalNumbers: true, // DECIMAL (nota) chega como number, não string
+    decimalNumbers: true, // DECIMAL (nota, valor) chega como number, não string
+    dateStrings: ['DATE'], // DATE (ex.: previsão de fecho) chega como 'YYYY-MM-DD', sem fuso
     // TINYINT(1) (tem_site) chega como boolean.
     typeCast(field, next) {
       if (field.type === 'TINY' && field.length === 1) {
@@ -218,6 +219,91 @@ const SCHEMA = [
         COLLATE = utf8mb4_0900_ai_ci
     `,
   },
+
+  // --- CRM comercial ---------------------------------------------------------
+  {
+    table: 'deals',
+    sql: `
+      CREATE TABLE IF NOT EXISTS deals (
+        id                   INT UNSIGNED   NOT NULL AUTO_INCREMENT,
+        title                VARCHAR(200)   NOT NULL,
+        company              VARCHAR(190)   NULL,
+        contact_name         VARCHAR(160)   NULL,
+        phone                VARCHAR(30)    NULL,
+        email                VARCHAR(190)   NULL,
+        value                DECIMAL(12,2)  NOT NULL DEFAULT 0,
+        stage                ENUM('lead', 'qualification', 'proposal', 'negotiation', 'won', 'lost') NOT NULL DEFAULT 'lead',
+        position             INT UNSIGNED   NOT NULL DEFAULT 0 COMMENT 'Ordem dentro do estágio (0 = topo)',
+        owner_id             INT UNSIGNED   NULL,
+        lead_id              INT UNSIGNED   NULL,
+        client_id            INT UNSIGNED   NULL,
+        expected_close_date  DATE           NULL,
+        lost_reason          VARCHAR(255)   NULL,
+        won_at               DATETIME       NULL,
+        lost_at              DATETIME       NULL,
+        stage_changed_at     DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_by           INT UNSIGNED   NULL,
+        created_at           DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at           DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+        PRIMARY KEY (id),
+        KEY idx_deals_stage_position (stage, position),
+        KEY idx_deals_owner_stage (owner_id, stage),
+        -- Métricas por intervalo de datas (e por colaborador).
+        KEY idx_deals_won (won_at, owner_id),
+        KEY idx_deals_lost (lost_at, owner_id),
+        KEY idx_deals_created (created_at, owner_id),
+        KEY idx_deals_lead (lead_id),
+        KEY idx_deals_client (client_id),
+        CONSTRAINT chk_deals_value CHECK (value >= 0),
+        CONSTRAINT fk_deals_owner FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE SET NULL,
+        CONSTRAINT fk_deals_created_by FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL,
+        CONSTRAINT fk_deals_lead FOREIGN KEY (lead_id) REFERENCES leads (id) ON DELETE SET NULL,
+        CONSTRAINT fk_deals_client FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE SET NULL
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
+  {
+    table: 'lead_triage',
+    sql: `
+      CREATE TABLE IF NOT EXISTS lead_triage (
+        lead_id      INT UNSIGNED      NOT NULL,
+        status       ENUM('pending', 'qualified', 'on_hold', 'discarded') NOT NULL DEFAULT 'pending',
+        assigned_to  INT UNSIGNED      NULL,
+        assigned_at  DATETIME          NULL,
+        score        TINYINT UNSIGNED  NULL COMMENT 'Qualificação 0-100',
+        notes        VARCHAR(1000)     NULL,
+        hold_until   DATE              NULL,
+        triaged_by   INT UNSIGNED      NULL,
+        triaged_at   DATETIME          NULL,
+        deal_id      INT UNSIGNED      NULL COMMENT 'Negócio criado ao qualificar',
+        created_at   DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at   DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+        PRIMARY KEY (lead_id),
+        KEY idx_triage_status_assigned (status, assigned_to),
+        KEY idx_triage_assigned_status (assigned_to, status),
+        KEY idx_triage_triaged (triaged_at, triaged_by),
+        CONSTRAINT chk_triage_score CHECK (score IS NULL OR score <= 100),
+        CONSTRAINT fk_triage_lead FOREIGN KEY (lead_id) REFERENCES leads (id) ON DELETE CASCADE,
+        CONSTRAINT fk_triage_assigned FOREIGN KEY (assigned_to) REFERENCES users (id) ON DELETE SET NULL,
+        CONSTRAINT fk_triage_triaged_by FOREIGN KEY (triaged_by) REFERENCES users (id) ON DELETE SET NULL,
+        CONSTRAINT fk_triage_deal FOREIGN KEY (deal_id) REFERENCES deals (id) ON DELETE SET NULL
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
+];
+
+// Idempotentes; rodam em todo boot, depois das tabelas.
+const POST_MIGRATIONS = [
+  {
+    name: 'lead_triage: todo lead existente entra na fila',
+    sql: 'INSERT IGNORE INTO lead_triage (lead_id) SELECT id FROM leads',
+  },
 ];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -263,6 +349,11 @@ async function migrate(logger) {
       // Ex.: usuário sem permissão de CREATE. Aqui sim o erro é fatal: sem tabela a API não funciona.
       throw new Error(`Falha ao criar a tabela "${table}": ${err.message}`);
     }
+  }
+
+  for (const { name, sql } of POST_MIGRATIONS) {
+    const [result] = await db.raw(sql);
+    if (result?.affectedRows) logger.info({ rows: result.affectedRows }, `Auto-migration: ${name}`);
   }
 
   const created = tables.filter((table) => !before.has(table));

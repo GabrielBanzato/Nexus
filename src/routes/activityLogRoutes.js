@@ -9,7 +9,7 @@ const listSchema = {
     properties: {
       user_id: { type: 'integer', minimum: 1 },
       action: { type: 'string', minLength: 1, maxLength: 64, description: 'Prefixo, ex: "ticket" ou "kanban.move"' },
-      entity_type: { type: 'string', enum: ['user', 'client', 'ticket', 'kanban_task', 'lead'] },
+      entity_type: { type: 'string', enum: ['user', 'client', 'ticket', 'kanban_task', 'lead', 'deal'] },
       entity_id: { type: 'integer', minimum: 1 },
       ...pagination,
     },

@@ -1,3 +1,4 @@
+import { publish } from '../lib/events.js';
 import { forbidden, notFound } from '../lib/errors.js';
 import { isManager } from '../plugins/auth.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
@@ -85,6 +86,7 @@ export default async function kanbanRoutes(app) {
       entityId: task.id,
       details: { title: task.title, column: task.column_name },
     });
+    publish('kanban', request);
     return reply.code(201).send({ data: task });
   });
 
@@ -100,6 +102,7 @@ export default async function kanbanRoutes(app) {
       entityId: task.id,
       details: diff(before, fields, ['title', 'responsible_id']),
     });
+    publish('kanban', request);
     return { data: task };
   });
 
@@ -117,6 +120,7 @@ export default async function kanbanRoutes(app) {
         entityId: task.id,
         details: { from, to: { column: task.column_name, position: task.position } },
       });
+      publish('kanban', request);
     }
     return { data: task };
   });
@@ -136,6 +140,7 @@ export default async function kanbanRoutes(app) {
       entityId: existing.id,
       details: { title: task.title, column: task.column_name },
     });
+    publish('kanban', request);
     return reply.code(204).send();
   });
 }

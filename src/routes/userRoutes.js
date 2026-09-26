@@ -1,3 +1,4 @@
+import { publish } from '../lib/events.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { requireRole } from '../plugins/auth.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
@@ -80,6 +81,7 @@ export default async function userRoutes(app) {
     const changes = diff(before, request.body, ['name', 'email', 'role', 'is_active']);
     if (request.body.password) changes.password = 'redefinida';
     await logActivity(request, { action: 'user.update', entityType: 'user', entityId: id, details: changes });
+    publish('users', request);
 
     return { data: user };
   });

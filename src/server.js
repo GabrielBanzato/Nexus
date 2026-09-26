@@ -8,10 +8,15 @@ import { ensureBootstrapAdmin } from './repositories/userRepository.js';
 import activityLogRoutes from './routes/activityLogRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
+import dealRoutes from './routes/dealRoutes.js';
+import eventRoutes from './routes/eventRoutes.js';
 import kanbanRoutes from './routes/kanbanRoutes.js';
 import leadRoutes from './routes/leadRoutes.js';
+import metricsRoutes from './routes/metricsRoutes.js';
 import scrapeRoutes from './routes/scrapeRoutes.js';
 import ticketRoutes from './routes/ticketRoutes.js';
+import timelineRoutes from './routes/timelineRoutes.js';
+import triageRoutes from './routes/triageRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 
 export async function buildApp() {
@@ -20,6 +25,8 @@ export async function buildApp() {
   const app = Fastify({
     logger: { level: config.server.logLevel },
     trustProxy: config.server.trustProxy,
+    // Fecha também ligações longas (SSE) no shutdown, senão o 'docker stop' espera o timeout.
+    forceCloseConnections: true,
     // Aceita "?grupo=sem_site" além de "SEM_SITE".
     ajv: { customOptions: { coerceTypes: true, useDefaults: true } },
   });
@@ -64,6 +71,15 @@ export async function buildApp() {
     await protectedApp.register(ticketRoutes);
     await protectedApp.register(kanbanRoutes);
     await protectedApp.register(activityLogRoutes);
+
+    // CRM comercial
+    await protectedApp.register(triageRoutes);
+    await protectedApp.register(dealRoutes);
+    await protectedApp.register(metricsRoutes);
+    await protectedApp.register(timelineRoutes);
+
+    // Tempo real (Server-Sent Events)
+    await protectedApp.register(eventRoutes);
   });
 
   app.addHook('onClose', async () => closeDatabase());

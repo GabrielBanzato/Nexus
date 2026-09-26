@@ -1,3 +1,4 @@
+import { publish } from '../lib/events.js';
 import { forbidden, notFound } from '../lib/errors.js';
 import { isManager, requireRole } from '../plugins/auth.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
@@ -89,6 +90,7 @@ export default async function ticketRoutes(app) {
       entityId: ticket.id,
       details: { title: ticket.title, priority: ticket.priority, assigned_to: ticket.assigned_to },
     });
+    publish('tickets', request);
     return reply.code(201).send({ data: ticket });
   });
 
@@ -105,6 +107,7 @@ export default async function ticketRoutes(app) {
       entityId: ticket.id,
       details: diff(before, fields, TICKET_FIELDS.filter((f) => f !== 'description')),
     });
+    publish('tickets', request);
     return { data: ticket };
   });
 
@@ -119,6 +122,7 @@ export default async function ticketRoutes(app) {
       entityId: before.id,
       details: { title: before.title },
     });
+    publish('tickets', request);
     return reply.code(204).send();
   });
 }

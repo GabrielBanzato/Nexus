@@ -1,3 +1,4 @@
+import { publish } from '../lib/events.js';
 import { forbidden, notFound } from '../lib/errors.js';
 import { isManager, requireRole } from '../plugins/auth.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
@@ -73,6 +74,7 @@ export default async function clientRoutes(app) {
       entityId: client.id,
       details: { name: client.name, status: client.status },
     });
+    publish('clients', request);
     return reply.code(201).send({ data: client });
   });
 
@@ -96,6 +98,7 @@ export default async function clientRoutes(app) {
       entityId: client.id,
       details: diff(before, fields, CLIENT_FIELDS),
     });
+    publish('clients', request);
     return { data: client };
   });
 
@@ -113,6 +116,7 @@ export default async function clientRoutes(app) {
         entityId: before.id,
         details: { name: before.name, company: before.company },
       });
+      publish('clients', request);
       return reply.code(204).send();
     },
   );

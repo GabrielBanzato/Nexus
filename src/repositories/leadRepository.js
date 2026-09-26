@@ -64,6 +64,11 @@ export async function upsertLead(lead) {
     .onConflict('chave_dedupe')
     .merge({ ...scrapedFields, atualizado_em: db.fn.now() });
 
+  // Todo lead novo entra na fila de triagem (INSERT IGNORE: não mexe na triagem existente).
+  if (!exists) {
+    await db.raw('INSERT IGNORE INTO lead_triage (lead_id) SELECT id FROM leads WHERE chave_dedupe = ?', [chaveDedupe]);
+  }
+
   return { created: !exists };
 }
 

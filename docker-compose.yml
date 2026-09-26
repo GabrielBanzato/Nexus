@@ -15,10 +15,12 @@ services:
     image: mysql:8.4
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # ":?" faz o deploy falhar com mensagem clara se a senha não estiver no .env,
+      # em vez de o MySQL abortar o init e o container ficar "unhealthy".
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Defina MYSQL_ROOT_PASSWORD no .env}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-nexus}
       MYSQL_USER: ${MYSQL_USER:-nexus}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Defina MYSQL_PASSWORD no .env}
       TZ: UTC
     command:
       - --character-set-server=utf8mb4
@@ -33,12 +35,16 @@ services:
       # O container continua escutando na 3306, e é por ela que o backend se conecta (rede interna).
       - "3307:3306"
     healthcheck:
-      # Via TCP: durante o init o MySQL roda sem rede, então só fica "healthy" quando estiver pronto de fato.
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
+      # CMD-SHELL (e não CMD): sem shell, a variável da senha não seria expandida dentro do container.
+      # "$$" escapa o "$" para o Compose não tentar resolver a variável no host.
+      # -h 127.0.0.1 força TCP: durante o init o MySQL roda um servidor temporário só com socket,
+      # então o check só passa quando o servidor definitivo estiver aceitando conexões.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 20s
+      retries: 10
+      # Tempo para o primeiro boot inicializar o datadir e rodar o init.sql (falhas aqui não contam).
+      start_period: 60s
 
   # ---------------------------------------------------------------------------
   backend:

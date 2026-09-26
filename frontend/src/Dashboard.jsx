@@ -709,7 +709,7 @@ function Toast({ toast, onClose }) {
 // Dashboard
 // ---------------------------------------------------------------------------
 
-export default function Dashboard() {
+export default function Dashboard({ onLogout }) {
   const [nicho, setNicho] = useState('');
   const [grupo, setGrupo] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
@@ -721,6 +721,7 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [toast, setToast] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   const debouncedNicho = useDebouncedValue(nicho.trim());
 
@@ -778,7 +779,7 @@ export default function Dashboard() {
         setStatus('success');
       })
       .catch((err) => {
-        if (err.name === 'AbortError') return;
+        if (err.name === 'AbortError' || err.status === 401) return;
         setError(err.message);
         setStatus('error');
       });
@@ -801,6 +802,70 @@ export default function Dashboard() {
     }
   }, [debouncedNicho, grupo, leads.length]);
 
+  const patchLeadLocally = useCallback((id, changes) => {
+    setLeads((current) => current.map((lead) => (lead.id === id ? { ...lead, ...changes } : lead)));
+  }, []);
+
+  /**
+   * Disparado ao clicar no WhatsApp: marca o lead como CONTATADO sem bloquear a abertura do chat.
+   * Atualização otimista + troca condicional no backend (statusAtual: NOVO), para não
+   * sobrescrever um lead que outro vendedor já tenha avançado no funil.
+   */
+  const markAsContacted = useCallback(
+    async (lead) => {
+      if (lead.status_prospeccao !== 'NOVO') return;
+
+      patchLeadLocally(lead.id, { status_prospeccao: 'CONTATADO' });
+      try {
+        const updated = await updateLeadStatus(lead.id, 'CONTATADO', { statusAtual: 'NOVO' });
+        patchLeadLocally(lead.id, updated);
+      } catch (err) {
+        if (err.status === 401) return; // sessão expirou: o App já redireciona para o login
+
+        if (err.status === 409 && err.body?.lead) {
+          patchLeadLocally(lead.id, err.body.lead);
+          setToast({
+            type: 'error',
+            title: 'Atenção: lead já trabalhado',
+            message: `"${lead.name}" já estava com status ${err.body.lead.status_prospeccao} por outra pessoa da equipe.`,
+          });
+          return;
+        }
+
+        patchLeadLocally(lead.id, { status_prospeccao: 'NOVO' });
+        setToast({
+          type: 'error',
+          title: 'Status não atualizado',
+          message: `Não foi possível marcar "${lead.name}" como abordado. ${err.message}`,
+        });
+      }
+    },
+    [patchLeadLocally],
+  );
+
+  /** Exporta TODOS os leads dos filtros ativos (não só a página carregada na tela). */
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    try {
+      const filters = { nicho: debouncedNicho, grupo };
+      const rows = leads.length >= total ? leads : await fetchAllLeads(filters);
+      if (!rows.length) {
+        setToast({ type: 'error', title: 'Nada para exportar', message: 'Nenhum lead corresponde aos filtros atuais.' });
+        return;
+      }
+      exportLeadsCsv(rows, filters);
+      setToast({
+        type: 'success',
+        title: 'CSV exportado!',
+        message: `${numberFormat.format(rows.length)} leads exportados. Pronto para subir como Público Personalizado no Meta Ads.`,
+      });
+    } catch (err) {
+      if (err.status !== 401) setToast({ type: 'error', title: 'Falha na exportação', message: err.message });
+    } finally {
+      setExporting(false);
+    }
+  }, [debouncedNicho, grupo, leads, total]);
+
   const clearFilters = () => {
     setNicho('');
     setGrupo('');
@@ -811,7 +876,15 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#111111] bg-[radial-gradient(ellipse_80%_40%_at_50%_-10%,rgba(127,29,29,0.18),transparent)]">
-      <Header loaded={leads.length} total={total} counts={counts} isLoading={isLoading} />
+      <Header
+        loaded={leads.length}
+        total={total}
+        counts={counts}
+        isLoading={isLoading}
+        onExport={handleExport}
+        exporting={exporting}
+        onLogout={onLogout}
+      />
 
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <RadarSearch job={job} isBusy={isScraping} onStart={startScrapeJob} />
@@ -872,7 +945,7 @@ export default function Dashboard() {
             }`}
           >
             {leads.map((lead) => (
-              <LeadCard key={lead.id} lead={lead} />
+              <LeadCard key={lead.id} lead={lead} onContact={markAsContacted} />
             ))}
           </div>
         )}

@@ -47,9 +47,14 @@ async function request(path, { auth = true, headers, ...options } = {}) {
 // Auth
 // ---------------------------------------------------------------------------
 
-/** @returns {Promise<{ token: string, expiresIn: string }>} */
-export function login(senha) {
-  return request('/api/login', { auth: false, method: 'POST', body: JSON.stringify({ senha }) });
+/** @returns {Promise<{ token: string, expiresIn: string, user: object }>} */
+export async function login(email, password) {
+  const { data } = await request('/api/auth/login', {
+    auth: false,
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,3 +104,47 @@ export function startScrape({ termo, maxResultados }) {
 export function fetchScrapeJob(jobId) {
   return request(`/api/scrape/${jobId}`);
 }
+
+// ---------------------------------------------------------------------------
+// Equipa e operações (respostas no formato { data } / { data, meta })
+// ---------------------------------------------------------------------------
+
+/** Query string ignorando valores vazios (undefined, null, '' e false). */
+function qs(params = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '' || value === false) continue;
+    search.set(key, String(value));
+  }
+  const text = search.toString();
+  return text ? `?${text}` : '';
+}
+
+const json = (method, body) => ({ method, body: JSON.stringify(body) });
+const unwrap = (response) => response.data;
+
+// Sessão / utilizadores
+export const getMe = () => request('/api/auth/me').then(unwrap);
+export const getUserDirectory = () => request('/api/users/directory').then(unwrap);
+export const listUsers = (params) => request(`/api/users${qs(params)}`);
+export const createUser = (body) => request('/api/auth/register', json('POST', body)).then(unwrap);
+export const updateUser = (id, body) => request(`/api/users/${id}`, json('PATCH', body)).then(unwrap);
+
+// Clientes
+export const listClients = (params) => request(`/api/clients${qs(params)}`);
+export const createClient = (body) => request('/api/clients', json('POST', body)).then(unwrap);
+export const updateClient = (id, body) => request(`/api/clients/${id}`, json('PATCH', body)).then(unwrap);
+export const deleteClient = (id) => request(`/api/clients/${id}`, { method: 'DELETE' });
+
+// Chamados
+export const listTickets = (params) => request(`/api/tickets${qs(params)}`);
+export const createTicket = (body) => request('/api/tickets', json('POST', body)).then(unwrap);
+export const updateTicket = (id, body) => request(`/api/tickets/${id}`, json('PATCH', body)).then(unwrap);
+export const deleteTicket = (id) => request(`/api/tickets/${id}`, { method: 'DELETE' });
+
+// Kanban
+export const getKanbanBoard = (params) => request(`/api/kanban${qs(params)}`).then(unwrap);
+export const createKanbanTask = (body) => request('/api/kanban/tasks', json('POST', body)).then(unwrap);
+export const updateKanbanTask = (id, body) => request(`/api/kanban/tasks/${id}`, json('PATCH', body)).then(unwrap);
+export const moveKanbanTask = (id, body) => request(`/api/kanban/tasks/${id}/move`, json('PATCH', body)).then(unwrap);
+export const deleteKanbanTask = (id) => request(`/api/kanban/tasks/${id}`, { method: 'DELETE' });

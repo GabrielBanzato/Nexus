@@ -65,3 +65,128 @@ CREATE TABLE IF NOT EXISTS scrape_jobs (
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;
+
+-- =============================================================================
+-- Gestão de equipa e operações
+-- (ordem importa: tabelas referenciadas por FK vêm antes)
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- Utilizadores (roles: admin, partner, agent). Nunca apagados: desativados.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
+  id             INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  name           VARCHAR(120)  NOT NULL,
+  email          VARCHAR(190)  NOT NULL,
+  password_hash  CHAR(60)      NOT NULL COMMENT 'bcrypt',
+  role           ENUM('admin', 'partner', 'agent') NOT NULL DEFAULT 'agent',
+  is_active      TINYINT(1)    NOT NULL DEFAULT 1,
+  last_login_at  DATETIME      NULL,
+  created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_users_email (email),
+  KEY idx_users_role_active (role, is_active)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------------------------------
+-- Clientes conquistados
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS clients (
+  id              INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  name            VARCHAR(160)  NOT NULL,
+  company         VARCHAR(190)  NULL,
+  phone           VARCHAR(30)   NULL,
+  email           VARCHAR(190)  NULL,
+  status          ENUM('lead', 'active', 'archived') NOT NULL DEFAULT 'lead',
+  responsible_id  INT UNSIGNED  NULL,
+  lead_id         INT UNSIGNED  NULL COMMENT 'Lead de prospecção que originou o cliente',
+  created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+  KEY idx_clients_status (status),
+  KEY idx_clients_responsible (responsible_id),
+  KEY idx_clients_lead (lead_id),
+  KEY idx_clients_company (company),
+  CONSTRAINT fk_clients_responsible FOREIGN KEY (responsible_id) REFERENCES users (id) ON DELETE SET NULL,
+  CONSTRAINT fk_clients_lead FOREIGN KEY (lead_id) REFERENCES leads (id) ON DELETE SET NULL
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------------------------------
+-- Chamados / tickets
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tickets (
+  id           INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  title        VARCHAR(200)  NOT NULL,
+  description  TEXT          NULL,
+  status       ENUM('open', 'in_progress', 'resolved', 'closed') NOT NULL DEFAULT 'open',
+  priority     ENUM('low', 'medium', 'high', 'urgent') NOT NULL DEFAULT 'medium',
+  created_by   INT UNSIGNED  NOT NULL,
+  assigned_to  INT UNSIGNED  NULL,
+  client_id    INT UNSIGNED  NULL,
+  resolved_at  DATETIME      NULL,
+  created_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+  KEY idx_tickets_status_priority (status, priority),
+  KEY idx_tickets_assigned_status (assigned_to, status),
+  KEY idx_tickets_client (client_id),
+  KEY idx_tickets_created_by (created_by),
+  CONSTRAINT fk_tickets_created_by FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE RESTRICT,
+  CONSTRAINT fk_tickets_assigned_to FOREIGN KEY (assigned_to) REFERENCES users (id) ON DELETE SET NULL,
+  CONSTRAINT fk_tickets_client FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE SET NULL
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------------------------------
+-- Quadro Kanban (posições densas por coluna: 0 = topo)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS kanban_tasks (
+  id              INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  title           VARCHAR(200)  NOT NULL,
+  description     TEXT          NULL,
+  column_name     ENUM('todo', 'in_progress', 'review', 'done') NOT NULL DEFAULT 'todo',
+  position        INT UNSIGNED  NOT NULL DEFAULT 0,
+  responsible_id  INT UNSIGNED  NULL,
+  created_by      INT UNSIGNED  NULL,
+  created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+  KEY idx_kanban_column_position (column_name, position),
+  KEY idx_kanban_responsible (responsible_id),
+  CONSTRAINT fk_kanban_responsible FOREIGN KEY (responsible_id) REFERENCES users (id) ON DELETE SET NULL,
+  CONSTRAINT fk_kanban_created_by FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------------------------------
+-- Logs de atividade (auditoria)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id           BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  user_id      INT UNSIGNED     NULL,
+  action       VARCHAR(64)      NOT NULL COMMENT 'ex: ticket.update, kanban.move',
+  entity_type  VARCHAR(32)      NULL,
+  entity_id    INT UNSIGNED     NULL,
+  details      JSON             NULL,
+  ip           VARCHAR(45)      NULL,
+  created_at   DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+  KEY idx_logs_user_created (user_id, created_at),
+  KEY idx_logs_entity (entity_type, entity_id),
+  KEY idx_logs_action_created (action, created_at),
+  CONSTRAINT fk_logs_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci;

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Eye, EyeOff, LoaderCircle, LockKeyhole, Radar, TriangleAlert } from 'lucide-react';
+import { Eye, EyeOff, LoaderCircle, LockKeyhole, Mail, Radar, TriangleAlert } from 'lucide-react';
 import { login } from './lib/api.js';
 
 /**
@@ -7,6 +7,7 @@ import { login } from './lib/api.js';
  * @param {{ onSuccess: (token: string) => void, notice?: string | null }} props
  */
 export default function Login({ onSuccess, notice }) {
+  const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -14,15 +15,15 @@ export default function Login({ onSuccess, notice }) {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!senha) {
-      setError('Digite a senha de acesso.');
+    if (!email.trim() || !senha) {
+      setError('Informe email e senha.');
       return;
     }
 
     setLoading(true);
     setError(null);
     try {
-      const { token } = await login(senha);
+      const { token } = await login(email.trim(), senha);
       onSuccess(token);
     } catch (err) {
       setError(err.message);
@@ -55,8 +56,26 @@ export default function Login({ onSuccess, notice }) {
             </p>
           )}
 
+          <label htmlFor="email" className="text-sm font-medium text-neutral-300">
+            Email
+          </label>
+          <div className="relative mt-2 mb-4">
+            <Mail className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-neutral-500" />
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+              autoFocus
+              disabled={loading}
+              placeholder="voce@empresa.com"
+              className="h-11 w-full rounded-xl border border-neutral-800 bg-[#141414] pr-4 pl-10 text-sm text-neutral-100 placeholder:text-neutral-600 transition outline-none focus:border-red-700 focus:ring-4 focus:ring-red-900/30 disabled:opacity-60"
+            />
+          </div>
+
           <label htmlFor="senha" className="text-sm font-medium text-neutral-300">
-            Senha de acesso
+            Senha
           </label>
           <div className="relative mt-2">
             <LockKeyhole className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-neutral-500" />
@@ -66,7 +85,6 @@ export default function Login({ onSuccess, notice }) {
               value={senha}
               onChange={(e) => setSenha(e.target.value)}
               autoComplete="current-password"
-              autoFocus
               disabled={loading}
               placeholder="••••••••"
               aria-invalid={Boolean(error)}

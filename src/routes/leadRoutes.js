@@ -1,4 +1,5 @@
 import { LEAD_GROUPS } from '../services/leadClassifier.js';
+import { logActivity } from '../repositories/activityLogRepository.js';
 import { PROSPECT_STATUSES, findLeads, updateLeadStatus } from '../repositories/leadRepository.js';
 
 const leadsQuerySchema = {
@@ -49,6 +50,12 @@ export default async function leadRoutes(app) {
         lead: result.lead,
       });
     }
+    await logActivity(request, {
+      action: 'lead.status',
+      entityType: 'lead',
+      entityId: result.lead.id,
+      details: { name: result.lead.name, status },
+    });
     return result.lead;
   });
 }

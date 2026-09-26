@@ -19,7 +19,11 @@ export const config = Object.freeze({
     trustProxy: process.env.TRUST_PROXY === 'true',
   },
   auth: {
+    // Usados só para criar o primeiro admin quando a tabela users está vazia.
+    adminEmail: (process.env.ADMIN_EMAIL || 'admin@nexus.local').trim().toLowerCase(),
+    adminName: process.env.ADMIN_NAME || 'Administrador',
     adminPassword: process.env.ADMIN_PASSWORD || '',
+    bcryptRounds: toInt(process.env.BCRYPT_ROUNDS, 12),
     jwtSecret: process.env.JWT_SECRET || '',
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
   },

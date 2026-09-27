@@ -73,9 +73,10 @@ export async function updateDeal(id, fields) {
  *  - → won:  won_at; cria o cliente conquistado (ou reativa o associado); lead → FECHADO.
  *  - → lost: lost_at + motivo.
  *  - won/lost → estágio aberto: reabre (limpa carimbos e motivo).
+ * `afterMove(trx, row)` (opcional) roda no fim, na mesma transação (ex.: atualizar a triagem).
  * @returns {Promise<{ deal, from, to, clientCreatedId: number|null }>}
  */
-export async function moveDeal(id, { stage, position, lostReason }) {
+export async function moveDeal(id, { stage, position, lostReason }, afterMove) {
   const { from, to, extra } = await board.move(id, { column: stage, position }, async (trx, { row, from: f, to: t }) => {
     const changes = {};
     let clientCreatedId = null;
@@ -109,6 +110,7 @@ export async function moveDeal(id, { stage, position, lostReason }) {
     }
 
     if (Object.keys(changes).length) await trx('deals').where({ id }).update(changes);
+    if (afterMove) await afterMove(trx, row);
     return { clientCreatedId };
   });
 

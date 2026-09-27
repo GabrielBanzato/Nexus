@@ -4,7 +4,8 @@ import { isAdmin, requireRole } from '../plugins/auth.js';
 import { logActivity } from '../repositories/activityLogRepository.js';
 import { OPEN_STAGES } from '../repositories/dealRepository.js';
 import {
-  TRIAGE_STATUSES,
+  TRIAGE_VIEWS,
+  archiveLead,
   assignLead,
   assignLeads,
   decideLead,
@@ -12,15 +13,27 @@ import {
   findTriageByLeadId,
   getTriageSummary,
   listTriage,
+  requalifyLead,
+  restoreLead,
 } from '../repositories/triageRepository.js';
 import { idParam, nullableId, pagination } from './schemas.js';
+
+/**
+ * Lead que o utilizador pode gerir: o admin, qualquer um; os demais, só os da própria fila.
+ * Lead de outra pessoa responde 404 (não revela que existe).
+ */
+async function findOwnTriage(user, leadId) {
+  const triage = await findTriageByLeadId(leadId);
+  if (!triage || (!isAdmin(user) && triage.assigned_to !== user.id)) throw notFound('Lead');
+  return triage;
+}
 
 const listSchema = {
   querystring: {
     type: 'object',
     additionalProperties: false,
     properties: {
-      status: { type: 'string', enum: TRIAGE_STATUSES, default: 'pending' },
+      status: { type: 'string', enum: TRIAGE_VIEWS, default: 'pending' },
       assigned_to: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'string', enum: ['none'] }] },
       mine: { type: 'boolean' },
       q: { type: 'string', minLength: 1, maxLength: 100 },
@@ -176,5 +189,57 @@ export default async function triageRoutes(app) {
     }
     publish('triage', request);
     return { data: { triage, deal } };
+  });
+
+  // Requalificar: devolve o lead à 1.ª coluna do pipeline ("Triagem/Novo"). Ver requalifyLead.
+  app.patch('/api/triage/:id/requalify', { schema: { params: idParam } }, async (request) => {
+    await findOwnTriage(request.currentUser, request.params.id);
+    const { triage, deal, reopened } = await requalifyLead(request.params.id, request.currentUser);
+
+    await logActivity(request, {
+      action: 'triage.requalify',
+      entityType: 'lead',
+      entityId: triage.id,
+      details: { name: triage.name, deal_id: deal.id, reopened },
+    });
+    await logActivity(request, {
+      action: reopened ? 'deal.stage' : 'deal.create',
+      entityType: 'deal',
+      entityId: deal.id,
+      details: reopened
+        ? { from: 'lost', to: 'lead', value: deal.value, from_lead: triage.id }
+        : { title: deal.title, value: deal.value, stage: deal.stage, owner: deal.owner_name, from_lead: triage.id },
+    });
+    publish('deals', request);
+    publish('triage', request);
+    return { data: { triage, deal, reopened } };
+  });
+
+  // Arquivar: sai da Triagem, mas o registo (estado, notas, negócio, histórico) fica intacto.
+  app.patch('/api/triage/:id/archive', { schema: { params: idParam } }, async (request) => {
+    await findOwnTriage(request.currentUser, request.params.id);
+    const triage = await archiveLead(request.params.id, request.currentUser.id);
+    await logActivity(request, {
+      action: 'triage.archive',
+      entityType: 'lead',
+      entityId: triage.id,
+      details: { name: triage.name, status: triage.triage_status },
+    });
+    publish('triage', request);
+    return { data: triage };
+  });
+
+  // Desfazer o arquivamento (vista "Arquivados" e botão "Desfazer" do aviso).
+  app.patch('/api/triage/:id/restore', { schema: { params: idParam } }, async (request) => {
+    await findOwnTriage(request.currentUser, request.params.id);
+    const triage = await restoreLead(request.params.id);
+    await logActivity(request, {
+      action: 'triage.restore',
+      entityType: 'lead',
+      entityId: triage.id,
+      details: { name: triage.name, status: triage.triage_status },
+    });
+    publish('triage', request);
+    return { data: triage };
   });
 }

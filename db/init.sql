@@ -256,6 +256,8 @@ CREATE TABLE IF NOT EXISTS lead_triage (
   triaged_by   INT UNSIGNED      NULL,
   triaged_at   DATETIME          NULL,
   deal_id      INT UNSIGNED      NULL COMMENT 'Negócio criado ao qualificar',
+  archived_at  DATETIME          NULL COMMENT 'Arquivado na Triagem (sai da vista; registo mantido)',
+  archived_by  INT UNSIGNED      NULL,
   created_at   DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at   DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
@@ -263,6 +265,7 @@ CREATE TABLE IF NOT EXISTS lead_triage (
   KEY idx_triage_status_assigned (status, assigned_to),
   KEY idx_triage_assigned_status (assigned_to, status),
   KEY idx_triage_triaged (triaged_at, triaged_by),
+  KEY idx_triage_archived (archived_at),
   CONSTRAINT chk_triage_score CHECK (score IS NULL OR score <= 100),
   CONSTRAINT fk_triage_lead FOREIGN KEY (lead_id) REFERENCES leads (id) ON DELETE CASCADE,
   CONSTRAINT fk_triage_assigned FOREIGN KEY (assigned_to) REFERENCES users (id) ON DELETE SET NULL,

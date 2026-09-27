@@ -176,6 +176,10 @@ export const assignTriageLead = (leadId, assignedTo) =>
   request(`/api/triage/${leadId}/assign`, json('PATCH', { assigned_to: assignedTo })).then(unwrap);
 export const assignTriageLeads = (leadIds, assignedTo) =>
   request('/api/triage/assign', json('POST', { lead_ids: leadIds, assigned_to: assignedTo })).then(unwrap);
+// Sem body: o request() não envia Content-Type e o Fastify aceita o PATCH vazio.
+export const requalifyTriageLead = (leadId) => request(`/api/triage/${leadId}/requalify`, { method: 'PATCH' }).then(unwrap);
+export const archiveTriageLead = (leadId) => request(`/api/triage/${leadId}/archive`, { method: 'PATCH' }).then(unwrap);
+export const restoreTriageLead = (leadId) => request(`/api/triage/${leadId}/restore`, { method: 'PATCH' }).then(unwrap);
 export const decideTriageLead =(leadId, body) => request(`/api/triage/${leadId}/decision`, json('POST', body)).then(unwrap);
 
 // Pipeline

@@ -52,6 +52,8 @@ export const TRIAGE_STATUS_META = {
   qualified: { label: 'Qualificado', tone: 'emerald' },
   on_hold: { label: 'Em espera', tone: 'amber' },
   discarded: { label: 'Descartado', tone: 'neutral' },
+  // Vista, não estado: arquivado mantém o estado original (ver lead_triage.archived_at).
+  archived: { label: 'Arquivado', tone: 'neutral' },
 };
 
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
@@ -101,6 +103,14 @@ export function describeActivity(log) {
       return { title: 'descartou o lead', body: d.notes, kind: 'lost' };
     case 'triage.assign':
       return { title: d.assigned_to ? `atribuiu o lead a ${d.assigned_to}` : 'removeu o responsável do lead', kind: 'move' };
+    case 'triage.requalify':
+      return { title: d.reopened ? 'requalificou o lead (negócio perdido reaberto em Triagem/Novo)' : 'requalificou o lead (novo negócio em Triagem/Novo)', kind: 'won' };
+    case 'triage.requeue':
+      return { title: `devolveu o lead à fila (negócio "${d.title}" apagado do pipeline)`, kind: 'move' };
+    case 'triage.archive':
+      return { title: 'arquivou o lead na triagem', kind: 'delete' };
+    case 'triage.restore':
+      return { title: 'restaurou o lead arquivado', kind: 'move' };
     default:
       if (log.action.startsWith('ticket.status.')) {
         const status = log.action.split('.').pop();

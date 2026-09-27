@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Archive,
+  ArchiveRestore,
   CircleCheck,
   CircleX,
   Globe,
@@ -12,6 +14,7 @@ import {
   MapPin,
   MapPinned,
   Phone,
+  RefreshCw,
   Search,
   Shuffle,
   Star,
@@ -20,7 +23,17 @@ import {
   UserRoundCheck,
   X,
 } from 'lucide-react';
-import { assignTriageLead, assignTriageLeads, decideTriageLead, distributeLeads, getTriageSummary, listTriage } from '../lib/api.js';
+import {
+  archiveTriageLead,
+  assignTriageLead,
+  assignTriageLeads,
+  decideTriageLead,
+  distributeLeads,
+  getTriageSummary,
+  listTriage,
+  requalifyTriageLead,
+  restoreTriageLead,
+} from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
 import { OPEN_DEAL_STAGES, ROLE_META, TRIAGE_STATUS_META, formatRelative, parseMoney } from '../lib/labels.js';
@@ -48,10 +61,19 @@ import {
 } from '../components/ui.jsx';
 
 const PAGE_SIZE = 25;
-const STATUS_ORDER = ['pending', 'on_hold', 'qualified', 'discarded'];
+const STATUS_ORDER = ['pending', 'on_hold', 'qualified', 'discarded', 'archived'];
 const VIEW_STORAGE_KEY = 'nexus:triageView';
 
 const isActionable = (status) => status === 'pending' || status === 'on_hold';
+/** Estado exibido: arquivado sobrepõe o estado da triagem (que fica guardado no registo). */
+const viewStatusOf = (lead) => (lead.archived_at ? 'archived' : lead.triage_status);
+/** Negócio vivo, aberto ou ganho: o lead já está no pipeline (ou virou cliente). */
+const inPipeline = (lead) => Boolean(lead.deal_stage) && lead.deal_stage !== 'lost';
+/**
+ * Requalificar vale fora da fila ativa (lá o "Qualificar" já cobre) e sem negócio vivo:
+ * qualificados com negócio apagado/perdido, descartados e arquivados.
+ */
+const canRequalify = (lead, status) => !isActionable(status) && !inPipeline(lead);
 const checkboxClass = 'size-4 shrink-0 cursor-pointer accent-red-700';
 
 // ---------------------------------------------------------------------------
@@ -462,7 +484,12 @@ function AssigneeControl({ lead, status, isAdmin, users, onAssign, className }) 
 }
 
 function DecisionButtons({ lead, status, onDecide, stretch = false }) {
-  if (status === 'qualified') return <Badge tone="emerald" dot>No pipeline</Badge>;
+  if (status === 'qualified') {
+    if (lead.deal_stage === 'won') return <Badge tone="emerald" dot>Cliente</Badge>;
+    if (inPipeline(lead)) return <Badge tone="emerald" dot>No pipeline</Badge>;
+    // Qualificado mas sem negócio vivo (apagado antes da correção, ou perdido): candidato a requalificar.
+    return <Badge tone="amber" dot>{lead.deal_stage === 'lost' ? 'Negócio perdido' : 'Fora do pipeline'}</Badge>;
+  }
   if (!isActionable(status)) return null;
   const grow = stretch && 'flex-1';
   return (
@@ -476,14 +503,57 @@ function DecisionButtons({ lead, status, onDecide, stretch = false }) {
   );
 }
 
-function TriageMeta({ lead, status }) {
+/** Requalificar / Arquivar (ou Restaurar, na vista de arquivados). */
+function LeadActions({ lead, status, busy, onRequalify, onArchive, onRestore, stretch = false }) {
   return (
     <>
-      {status !== 'pending' && lead.triaged_at && (
-        <span>{TRIAGE_STATUS_META[status].label} por {lead.triaged_by_name ?? '—'} {formatRelative(lead.triaged_at)}</span>
+      {canRequalify(lead, status) && (
+        <Button
+          size="sm"
+          variant="success"
+          icon={RefreshCw}
+          loading={busy === 'requalify'}
+          disabled={Boolean(busy)}
+          onClick={() => onRequalify(lead)}
+          title="Requalificar: envia o lead de novo para a coluna Triagem/Novo do pipeline"
+          className={stretch ? 'flex-1' : undefined}
+        >
+          Requalificar
+        </Button>
       )}
-      {status === 'on_hold' && lead.hold_until && (
+      {status === 'archived' ? (
+        <IconButton
+          icon={ArchiveRestore}
+          label={`Restaurar ${lead.name} na triagem`}
+          disabled={Boolean(busy)}
+          onClick={() => onRestore(lead)}
+          className="hover:text-emerald-300"
+        />
+      ) : (
+        <IconButton
+          icon={Archive}
+          label={`Arquivar ${lead.name}: sai da triagem, o registo é mantido`}
+          disabled={Boolean(busy)}
+          onClick={() => onArchive(lead)}
+          className="hover:text-red-400"
+        />
+      )}
+    </>
+  );
+}
+
+function TriageMeta({ lead }) {
+  const { triage_status: triageStatus } = lead;
+  return (
+    <>
+      {triageStatus !== 'pending' && lead.triaged_at && (
+        <span>{TRIAGE_STATUS_META[triageStatus].label} por {lead.triaged_by_name ?? '—'} {formatRelative(lead.triaged_at)}</span>
+      )}
+      {triageStatus === 'on_hold' && lead.hold_until && !lead.archived_at && (
         <span className="text-amber-300">Retomar em {new Date(`${lead.hold_until}T12:00:00`).toLocaleDateString('pt-PT')}</span>
+      )}
+      {lead.archived_at && (
+        <span>Arquivado por {lead.archived_by_name ?? '—'} {formatRelative(lead.archived_at)}</span>
       )}
     </>
   );
@@ -493,7 +563,7 @@ function TriageMeta({ lead, status }) {
 // Modo Lista
 // ---------------------------------------------------------------------------
 
-function LeadRow({ lead, status, isAdmin, users, selectable, selected, onToggleSelect, onDecide, onAssign }) {
+function LeadRow({ lead, status, isAdmin, users, selectable, selected, onToggleSelect, onDecide, onAssign, ...actions }) {
   const city = (lead.address ?? '').replace(/,?\s*\d{5}-?\d{3}\s*$/, '').split(',').slice(-1)[0]?.trim();
 
   return (
@@ -532,7 +602,7 @@ function LeadRow({ lead, status, isAdmin, users, selectable, selected, onToggleS
             {city && <span className="flex items-center gap-1"><MapPin className="size-3" />{city}</span>}
             {lead.rating && <span className="flex items-center gap-1"><Star className="size-3 fill-amber-400 text-amber-400" />{String(lead.rating).replace('.', ',')} ({lead.reviews_count ?? 0})</span>}
             {lead.phone && <span className="flex items-center gap-1"><Phone className="size-3" />{lead.phone}</span>}
-            <TriageMeta lead={lead} status={status} />
+            <TriageMeta lead={lead} />
           </p>
           {lead.notes && status !== 'pending' && <p className="mt-1.5 line-clamp-2 text-sm text-neutral-400">“{lead.notes}”</p>}
         </div>
@@ -542,6 +612,7 @@ function LeadRow({ lead, status, isAdmin, users, selectable, selected, onToggleS
         <AssigneeControl lead={lead} status={status} isAdmin={isAdmin} users={users} onAssign={onAssign} className="w-40" />
         <WhatsAppButton lead={lead} variant="icon" />
         <DecisionButtons lead={lead} status={status} onDecide={onDecide} />
+        <LeadActions lead={lead} status={status} {...actions} />
       </div>
     </li>
   );
@@ -551,7 +622,7 @@ function LeadRow({ lead, status, isAdmin, users, selectable, selected, onToggleS
 // Modo Caixas (mesmo visual dos cards do Painel de Prospecção)
 // ---------------------------------------------------------------------------
 
-function LeadBox({ lead, status, isAdmin, users, selectable, selected, onToggleSelect, onDecide, onAssign }) {
+function LeadBox({ lead, status, isAdmin, users, selectable, selected, onToggleSelect, onDecide, onAssign, ...actions }) {
   return (
     <article
       data-triage-item
@@ -599,9 +670,9 @@ function LeadBox({ lead, status, isAdmin, users, selectable, selected, onToggleS
         {status !== 'pending' && <Badge tone={TRIAGE_STATUS_META[status].tone}>{TRIAGE_STATUS_META[status].label}</Badge>}
       </div>
 
-      {(lead.triaged_at || lead.hold_until) && (
+      {(lead.triaged_at || lead.hold_until || lead.archived_at) && (
         <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-500">
-          <TriageMeta lead={lead} status={status} />
+          <TriageMeta lead={lead} />
         </p>
       )}
       {lead.notes && status !== 'pending' && <p className="mt-2 line-clamp-2 text-sm text-neutral-400">“{lead.notes}”</p>}
@@ -614,6 +685,7 @@ function LeadBox({ lead, status, isAdmin, users, selectable, selected, onToggleS
         <WhatsAppButton lead={lead} />
         <div className="flex flex-wrap items-center gap-2">
           <DecisionButtons lead={lead} status={status} onDecide={onDecide} stretch />
+          <LeadActions lead={lead} status={status} {...actions} stretch />
           {lead.maps_url && (
             <a
               href={lead.maps_url}
@@ -683,6 +755,54 @@ export default function TriagePage({ navigate }) {
     onError: (err) => toast.error('Não foi possível atribuir os leads', err.message),
   });
 
+  // Erro (ex.: 409 porque alguém já mexeu no lead): recarrega para mostrar o estado real.
+  const failWith = (title) => (err) => {
+    queryClient.invalidateQueries({ queryKey: ['triage'] });
+    toast.error(title, err.message);
+  };
+
+  const requalifyMutation = useMutation({
+    mutationFn: (lead) => requalifyTriageLead(lead.id),
+    onSuccess: ({ deal, reopened }) => {
+      queryClient.invalidateQueries({ queryKey: ['triage'] });
+      queryClient.invalidateQueries({ queryKey: ['deals'] });
+      toast.success(
+        'Lead requalificado',
+        reopened ? `Negócio "${deal.title}" reaberto no topo de Triagem/Novo.` : `Negócio "${deal.title}" criado no topo de Triagem/Novo.`,
+        { action: { label: 'Abrir pipeline', onClick: () => navigate('pipeline') } },
+      );
+    },
+    onError: failWith('Não foi possível requalificar'),
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: (lead) => restoreTriageLead(lead.id),
+    onSuccess: (triage) => {
+      queryClient.invalidateQueries({ queryKey: ['triage'] });
+      toast.success('Lead restaurado', `"${triage.name}" voltou para ${TRIAGE_STATUS_META[triage.triage_status].label}.`);
+    },
+    onError: failWith('Não foi possível restaurar'),
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: (lead) => archiveTriageLead(lead.id),
+    onSuccess: (triage) => {
+      queryClient.invalidateQueries({ queryKey: ['triage'] });
+      toast.success('Lead arquivado', `"${triage.name}" saiu da triagem. O registo continua guardado em Arquivado.`, {
+        action: { label: 'Desfazer', onClick: () => restoreMutation.mutate(triage) },
+      });
+    },
+    onError: failWith('Não foi possível arquivar'),
+  });
+
+  /** Ação em curso para este lead ('requalify' | 'archive' | 'restore'), para travar os botões dele. */
+  const busyFor = (lead) =>
+    [
+      ['requalify', requalifyMutation],
+      ['archive', archiveMutation],
+      ['restore', restoreMutation],
+    ].find(([, m]) => m.isPending && m.variables?.id === lead.id)?.[0] ?? null;
+
   const handleDone = (result, decided) => {
     setDecision(null);
     queryClient.invalidateQueries({ queryKey: ['triage'] });
@@ -723,21 +843,25 @@ export default function TriagePage({ navigate }) {
 
   const counts = summary.data?.counts;
   const leads = list.data?.data ?? [];
-  // Só leads ainda na fila (pendente/em espera) podem ser reatribuídos.
-  const selectableIds = leads.filter((l) => isActionable(l.triage_status)).map((l) => l.id);
-  // Ignora ids que saíram da página (ex.: decididos por outra pessoa em tempo real).
+  // Só leads ainda na fila (pendente/em espera, não arquivados) podem ser reatribuídos.
+  const selectableIds = leads.filter((l) => isActionable(viewStatusOf(l))).map((l) => l.id);
+  // Ignora ids que saíram da página (ex.: decididos ou arquivados, inclusive por outra pessoa).
   const visibleSelection = new Set(selectableIds.filter((id) => selected.has(id)));
 
   const itemProps = (lead) => ({
     lead,
-    status: lead.triage_status,
+    status: viewStatusOf(lead),
     isAdmin,
     users,
-    selectable: isActionable(lead.triage_status),
+    selectable: isActionable(viewStatusOf(lead)),
     selected: visibleSelection.has(lead.id),
     onToggleSelect: toggleSelect,
     onDecide: (l, s) => setDecision({ lead: l, status: s }),
     onAssign: (l, userId) => assignMutation.mutate({ lead: l, userId }),
+    busy: busyFor(lead),
+    onRequalify: (l) => requalifyMutation.mutate(l),
+    onArchive: (l) => archiveMutation.mutate(l),
+    onRestore: (l) => restoreMutation.mutate(l),
   });
 
   const pagination = list.data?.meta.total > PAGE_SIZE && <Pagination meta={list.data.meta} onChange={changePage} />;
@@ -831,7 +955,9 @@ export default function TriagePage({ navigate }) {
               ? isAdmin
                 ? 'Não há leads à espera de triagem com estes filtros. Rode o Radar de Busca ou distribua leads sem responsável.'
                 : 'Não há leads atribuídos a si. Assim que o admin distribuir leads, eles aparecem aqui.'
-              : 'Ajuste os filtros para ver outros leads.'
+              : status === 'archived'
+                ? 'Leads arquivados (ícone da caixa) ficam aqui, com todo o histórico, e podem ser restaurados ou requalificados.'
+                : 'Ajuste os filtros para ver outros leads.'
           }
           action={status === 'pending' && isAdmin && <Button variant="secondary" onClick={() => navigate('prospeccao')}>Ir para a Prospecção</Button>}
         />

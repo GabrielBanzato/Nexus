@@ -284,6 +284,8 @@ const SCHEMA = [
         triaged_by   INT UNSIGNED      NULL,
         triaged_at   DATETIME          NULL,
         deal_id      INT UNSIGNED      NULL COMMENT 'Negócio criado ao qualificar',
+        archived_at  DATETIME          NULL COMMENT 'Arquivado na Triagem (sai da vista; registo mantido)',
+        archived_by  INT UNSIGNED      NULL,
         created_at   DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at   DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
@@ -291,6 +293,7 @@ const SCHEMA = [
         KEY idx_triage_status_assigned (status, assigned_to),
         KEY idx_triage_assigned_status (assigned_to, status),
         KEY idx_triage_triaged (triaged_at, triaged_by),
+        KEY idx_triage_archived (archived_at),
         CONSTRAINT chk_triage_score CHECK (score IS NULL OR score <= 100),
         CONSTRAINT fk_triage_lead FOREIGN KEY (lead_id) REFERENCES leads (id) ON DELETE CASCADE,
         CONSTRAINT fk_triage_assigned FOREIGN KEY (assigned_to) REFERENCES users (id) ON DELETE SET NULL,
@@ -320,6 +323,17 @@ const COLUMN_MIGRATIONS = [
         ADD COLUMN hidden_by INT UNSIGNED NULL AFTER hidden_at,
         ADD KEY idx_leads_visiveis (is_hidden, criado_em),
         ADD KEY idx_leads_termo_busca (termo_busca)
+    `,
+  },
+  {
+    table: 'lead_triage',
+    column: 'archived_at',
+    name: 'lead_triage: arquivar na Triagem (soft delete)',
+    sql: `
+      ALTER TABLE lead_triage
+        ADD COLUMN archived_at DATETIME NULL COMMENT 'Arquivado na Triagem (sai da vista; registo mantido)' AFTER deal_id,
+        ADD COLUMN archived_by INT UNSIGNED NULL AFTER archived_at,
+        ADD KEY idx_triage_archived (archived_at)
     `,
   },
 ];

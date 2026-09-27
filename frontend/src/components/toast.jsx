@@ -11,6 +11,7 @@ const TONES = {
 
 /**
  * Notificações globais. Uso: const toast = useToast(); toast.success('Guardado!');
+ * Com ação: toast.success('Arquivado', 'Lead X', { action: { label: 'Desfazer', onClick } }).
  */
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
@@ -19,19 +20,20 @@ export function ToastProvider({ children }) {
   const dismiss = useCallback((id) => setToasts((list) => list.filter((t) => t.id !== id)), []);
 
   const push = useCallback(
-    (type, title, message, duration = 5000) => {
+    (type, title, message, { duration = 5000, action } = {}) => {
       const id = ++nextId.current;
-      setToasts((list) => [...list.slice(-3), { id, type, title, message }]);
-      setTimeout(() => dismiss(id), duration);
+      setToasts((list) => [...list.slice(-3), { id, type, title, message, action }]);
+      // Com ação (ex.: "Desfazer"), dá mais tempo para o utilizador reagir.
+      setTimeout(() => dismiss(id), action ? Math.max(duration, 8000) : duration);
     },
     [dismiss],
   );
 
   const api = useMemo(
     () => ({
-      success: (title, message) => push('success', title, message),
-      error: (title, message) => push('error', title, message, 8000),
-      info: (title, message) => push('info', title, message),
+      success: (title, message, options) => push('success', title, message, options),
+      error: (title, message, options) => push('error', title, message, { duration: 8000, ...options }),
+      info: (title, message, options) => push('info', title, message, options),
     }),
     [push],
   );
@@ -55,6 +57,18 @@ export function ToastProvider({ children }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-white">{toast.title}</p>
                 {toast.message && <p className="mt-0.5 text-sm break-words text-neutral-400">{toast.message}</p>}
+                {toast.action && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      dismiss(toast.id);
+                      toast.action.onClick();
+                    }}
+                    className="mt-2 rounded-lg text-sm font-semibold text-red-400 transition hover:text-red-300"
+                  >
+                    {toast.action.label}
+                  </button>
+                )}
               </div>
               <button
                 type="button"

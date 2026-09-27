@@ -13,6 +13,7 @@ const BUTTON_VARIANTS = {
   secondary: 'border border-neutral-700 text-neutral-200 hover:border-neutral-600 hover:bg-neutral-800',
   ghost: 'text-neutral-400 hover:bg-neutral-800 hover:text-white',
   danger: 'border border-red-900/70 bg-red-950/40 text-red-300 hover:bg-red-900/50 hover:text-white',
+  success: 'border border-emerald-900/60 bg-emerald-950/20 text-emerald-300 hover:bg-emerald-950/50 hover:text-emerald-200',
 };
 
 const BUTTON_SIZES = {

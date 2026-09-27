@@ -15,6 +15,7 @@
   "dependencies": {
     "@fastify/jwt": "^10.2.2",
     "@fastify/rate-limit": "^11.2.0",
+    "bcrypt": "^6.0.0",
     "fastify": "^5.2.1",
     "knex": "^3.1.0",
     "mysql2": "^3.24.4",

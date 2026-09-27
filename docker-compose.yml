@@ -68,7 +68,10 @@ services:
       SCRAPER_HEADLESS: "true"
       SCRAPER_MAX_RESULTS: ${SCRAPER_MAX_RESULTS:-50}
       # Autenticação
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD no .env}
+      # Primeiro admin: criado no arranque apenas se a tabela users estiver vazia.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@nexus.local}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrador}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no .env (min. 32 caracteres)}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
       # Atrás do Nginx: o IP real do usuário vem em X-Forwarded-For (rate limit do login).

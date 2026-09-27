@@ -2,9 +2,22 @@ import Fastify from 'fastify';
 import { config } from './config/env.js';
 import { db, initDatabase, closeDatabase } from './config/database.js';
 import { createScrapeQueue } from './jobs/scrapeQueue.js';
-import scrapeRoutes from './routes/scrapeRoutes.js';
-import leadRoutes from './routes/leadRoutes.js';
+import { registerErrorHandlers } from './lib/errors.js';
 import { assertAuthConfig, authenticate, registerAuth } from './plugins/auth.js';
+import { ensureBootstrapAdmin } from './repositories/userRepository.js';
+import activityLogRoutes from './routes/activityLogRoutes.js';
+import authRoutes from './routes/authRoutes.js';
+import clientRoutes from './routes/clientRoutes.js';
+import dealRoutes from './routes/dealRoutes.js';
+import eventRoutes from './routes/eventRoutes.js';
+import kanbanRoutes from './routes/kanbanRoutes.js';
+import leadRoutes from './routes/leadRoutes.js';
+import metricsRoutes from './routes/metricsRoutes.js';
+import scrapeRoutes from './routes/scrapeRoutes.js';
+import ticketRoutes from './routes/ticketRoutes.js';
+import timelineRoutes from './routes/timelineRoutes.js';
+import triageRoutes from './routes/triageRoutes.js';
+import userRoutes from './routes/userRoutes.js';
 
 export async function buildApp() {
   assertAuthConfig();
@@ -12,9 +25,14 @@ export async function buildApp() {
   const app = Fastify({
     logger: { level: config.server.logLevel },
     trustProxy: config.server.trustProxy,
+    // Fecha também ligações longas (SSE) no shutdown, senão o 'docker stop' espera o timeout.
+    forceCloseConnections: true,
     // Aceita "?grupo=sem_site" além de "SEM_SITE".
     ajv: { customOptions: { coerceTypes: true, useDefaults: true } },
   });
+
+  // Antes de qualquer rota: os contextos filhos herdam o handler de erros.
+  registerErrorHandlers(app);
 
   app.addHook('preValidation', async (request) => {
     if (typeof request.query?.grupo === 'string') {
@@ -34,14 +52,34 @@ export async function buildApp() {
     }
   });
 
-  // Rotas públicas: /health (acima) e POST /api/login.
   await registerAuth(app);
 
-  // Rotas protegidas: tudo registrado neste contexto exige JWT válido.
+  // Login (público) + /me, troca de senha e registo (protegidos internamente).
+  await app.register(authRoutes);
+
+  // Rotas protegidas: tudo registrado neste contexto exige JWT válido de um utilizador ativo.
   await app.register(async (protectedApp) => {
     protectedApp.addHook('onRequest', authenticate);
+
+    // Prospecção
     await protectedApp.register(scrapeRoutes);
     await protectedApp.register(leadRoutes);
+
+    // Gestão de equipe e operações
+    await protectedApp.register(userRoutes);
+    await protectedApp.register(clientRoutes);
+    await protectedApp.register(ticketRoutes);
+    await protectedApp.register(kanbanRoutes);
+    await protectedApp.register(activityLogRoutes);
+
+    // CRM comercial
+    await protectedApp.register(triageRoutes);
+    await protectedApp.register(dealRoutes);
+    await protectedApp.register(metricsRoutes);
+    await protectedApp.register(timelineRoutes);
+
+    // Tempo real (Server-Sent Events)
+    await protectedApp.register(eventRoutes);
   });
 
   app.addHook('onClose', async () => closeDatabase());
@@ -68,6 +106,7 @@ async function start() {
 
   try {
     await initDatabase({ logger: app.log });
+    await ensureBootstrapAdmin(app.log);
     await app.listen({ port: config.server.port, host: config.server.host });
   } catch (err) {
     app.log.error(err);

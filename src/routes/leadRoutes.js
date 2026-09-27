@@ -1,5 +1,14 @@
 import { LEAD_GROUPS } from '../services/leadClassifier.js';
-import { PROSPECT_STATUSES, findLeads, updateLeadStatus } from '../repositories/leadRepository.js';
+import { publish } from '../lib/events.js';
+import { notFound } from '../lib/errors.js';
+import { logActivity } from '../repositories/activityLogRepository.js';
+import {
+  PROSPECT_STATUSES,
+  findLeads,
+  listSearchTerms,
+  setLeadHidden,
+  updateLeadStatus,
+} from '../repositories/leadRepository.js';
 
 const leadsQuerySchema = {
   type: 'object',
@@ -7,16 +16,21 @@ const leadsQuerySchema = {
   properties: {
     grupo: { type: 'string', enum: Object.values(LEAD_GROUPS) },
     nicho: { type: 'string', minLength: 1, maxLength: 100 },
+    contato: { type: 'string', enum: ['todos', 'contatados', 'nao_contatados'], default: 'todos' },
+    visibilidade: { type: 'string', enum: ['ativos', 'ocultos'], default: 'ativos' },
+    busca: { type: 'string', minLength: 1, maxLength: 255 },
     limit: { type: 'integer', minimum: 1, maximum: 500, default: 50 },
     offset: { type: 'integer', minimum: 0, default: 0 },
   },
 };
 
+const idParams = {
+  type: 'object',
+  properties: { id: { type: 'integer', minimum: 1 } },
+};
+
 const updateStatusSchema = {
-  params: {
-    type: 'object',
-    properties: { id: { type: 'integer', minimum: 1 } },
-  },
+  params: idParams,
   body: {
     type: 'object',
     required: ['status'],
@@ -29,10 +43,23 @@ const updateStatusSchema = {
   },
 };
 
+const visibilitySchema = {
+  params: idParams,
+  body: {
+    type: 'object',
+    required: ['hidden'],
+    additionalProperties: false,
+    properties: { hidden: { type: 'boolean' } },
+  },
+};
+
 export default async function leadRoutes(app) {
   app.get('/api/leads', { schema: { querystring: leadsQuerySchema } }, async (request) => {
     return findLeads(request.query);
   });
+
+  // Pesquisas já feitas no Radar (alimenta o filtro "Pesquisa").
+  app.get('/api/leads/searches', async () => ({ data: await listSearchTerms() }));
 
   app.patch('/api/leads/:id/status', { schema: updateStatusSchema }, async (request, reply) => {
     const { status, statusAtual } = request.body;
@@ -49,6 +76,27 @@ export default async function leadRoutes(app) {
         lead: result.lead,
       });
     }
+    await logActivity(request, {
+      action: 'lead.status',
+      entityType: 'lead',
+      entityId: result.lead.id,
+      details: { name: result.lead.name, status },
+    });
     return result.lead;
+  });
+
+  // Ocultar/arquivar (soft delete) e restaurar. Nunca apaga o registo.
+  app.patch('/api/leads/:id/visibility', { schema: visibilitySchema }, async (request) => {
+    const lead = await setLeadHidden(request.params.id, request.body.hidden, request.currentUser.id);
+    if (!lead) throw notFound('Lead');
+
+    await logActivity(request, {
+      action: lead.is_hidden ? 'lead.hide' : 'lead.unhide',
+      entityType: 'lead',
+      entityId: lead.id,
+      details: { name: lead.name },
+    });
+    publish('triage', request); // leads ocultos saem da fila de triagem
+    return lead;
   });
 }

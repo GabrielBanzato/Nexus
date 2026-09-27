@@ -1,6 +1,6 @@
 import { publish } from '../lib/events.js';
 import { forbidden, notFound } from '../lib/errors.js';
-import { isManager } from '../plugins/auth.js';
+import { isAdmin } from '../plugins/auth.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
 import {
   KANBAN_COLUMNS,
@@ -60,6 +60,23 @@ const moveSchema = {
 
 const pick = (source, fields) => Object.fromEntries(fields.filter((f) => source[f] !== undefined).map((f) => [f, source[f]]));
 
+/**
+ * Privacidade: fora do admin, cada um só acessa as tarefas de que é responsável.
+ * Tarefa de outra pessoa responde 404 (não confirma que o id existe).
+ */
+async function findAccessibleTask(user, id) {
+  const task = await findTaskById(id);
+  if (!task || (!isAdmin(user) && task.responsible_id !== user.id)) throw notFound('Tarefa');
+  return task;
+}
+
+/** Não-admin não pode passar tarefas para outra pessoa (deixaria de vê-las). */
+function assertOwnResponsible(user, responsibleId) {
+  if (!isAdmin(user) && responsibleId !== undefined && responsibleId !== user.id) {
+    throw forbidden('Apenas o admin pode atribuir tarefas a outra pessoa.');
+  }
+}
+
 export default async function kanbanRoutes(app) {
   app.get(
     '/api/kanban',
@@ -73,13 +90,19 @@ export default async function kanbanRoutes(app) {
       },
     },
     async (request) => {
-      const responsibleId = request.query.mine ? request.currentUser.id : request.query.responsible_id;
+      const user = request.currentUser;
+      // Não-admin: WHERE responsible_id = <próprio id>, ignorando o filtro vindo da query.
+      const responsibleId = !isAdmin(user) || request.query.mine ? user.id : request.query.responsible_id;
       return { data: await getBoard({ responsibleId }), meta: { columns: KANBAN_COLUMNS } };
     },
   );
 
   app.post('/api/kanban/tasks', { schema: createSchema }, async (request, reply) => {
-    const task = await createTask({ ...request.body, created_by: request.currentUser.id });
+    const user = request.currentUser;
+    assertOwnResponsible(user, request.body.responsible_id);
+    const fields = { ...request.body, created_by: user.id };
+    if (!isAdmin(user)) fields.responsible_id = user.id;
+    const task = await createTask(fields);
     await logActivity(request, {
       action: 'kanban.create',
       entityType: 'kanban_task',
@@ -91,8 +114,8 @@ export default async function kanbanRoutes(app) {
   });
 
   app.patch('/api/kanban/tasks/:id', { schema: updateSchema }, async (request) => {
-    const before = await findTaskById(request.params.id);
-    if (!before) throw notFound('Tarefa');
+    const before = await findAccessibleTask(request.currentUser, request.params.id);
+    assertOwnResponsible(request.currentUser, request.body.responsible_id);
 
     const fields = pick(request.body, CONTENT_FIELDS);
     const task = await updateTask(before.id, fields);
@@ -108,6 +131,7 @@ export default async function kanbanRoutes(app) {
 
   // Endpoint do drag-and-drop.
   app.patch('/api/kanban/tasks/:id/move', { schema: moveSchema }, async (request) => {
+    await findAccessibleTask(request.currentUser, request.params.id);
     const { task, from } = await moveTask(request.params.id, {
       column: request.body.column_name,
       position: request.body.position,
@@ -126,12 +150,7 @@ export default async function kanbanRoutes(app) {
   });
 
   app.delete('/api/kanban/tasks/:id', { schema: { params: idParam } }, async (request, reply) => {
-    const user = request.currentUser;
-    const existing = await findTaskById(request.params.id);
-    if (!existing) throw notFound('Tarefa');
-    if (!isManager(user) && existing.responsible_id !== user.id && existing.created_by !== user.id) {
-      throw forbidden('Só pode apagar tarefas que criou ou pelas quais é responsável.');
-    }
+    const existing = await findAccessibleTask(request.currentUser, request.params.id);
 
     const task = await deleteTask(existing.id);
     await logActivity(request, {

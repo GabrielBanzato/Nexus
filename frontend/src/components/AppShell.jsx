@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BarChart3, Building2, Filter, Handshake, LogOut, Radar, SquareKanban, Ticket, Users } from 'lucide-react';
 import Dashboard from '../Dashboard.jsx';
 import ClientsPage from '../pages/ClientsPage.jsx';
@@ -13,13 +14,19 @@ import { useHashRoute } from '../lib/useHashRoute.js';
 import { useLiveUpdates } from '../lib/useLiveUpdates.js';
 import { Avatar, Badge, IconButton, Spinner, cx } from './ui.jsx';
 
+/**
+ * `adminOnly` (grupo ou rota): nem aparece no menu nem é roteável para outros papéis.
+ * O backend também bloqueia essas rotas (403); isto só evita expor a página na interface.
+ */
 const GROUPS = [
   {
     label: 'Comercial',
     routes: [
-      { path: 'prospeccao', label: 'Prospecção', icon: Radar, element: Dashboard },
+      // Radar/scraper e base bruta de leads: exclusivo do admin.
+      { path: 'prospeccao', label: 'Prospecção', icon: Radar, element: Dashboard, adminOnly: true },
       { path: 'triagem', label: 'Triagem', icon: Filter, element: TriagePage },
       { path: 'pipeline', label: 'Pipeline', icon: Handshake, element: PipelinePage, wide: true },
+      // Aberto a todos: o ranking da equipe é visível para fomentar a competição saudável.
       { path: 'desempenho', label: 'Desempenho', icon: BarChart3, element: PerformancePage },
     ],
   },
@@ -58,10 +65,29 @@ function LiveIndicator({ status }) {
   );
 }
 
+/** Menu visível para o utilizador: remove grupos e rotas `adminOnly` e grupos que ficarem vazios. */
+function visibleGroups(isAdmin) {
+  return GROUPS.filter((g) => !g.adminOnly || isAdmin)
+    .map((g) => ({ ...g, routes: g.routes.filter((r) => !r.adminOnly || isAdmin) }))
+    .filter((g) => g.routes.length > 0);
+}
+
 export default function AppShell() {
   const { user, isLoading, isAdmin, logout } = useAuth();
-  const [route, navigate] = useHashRoute('prospeccao');
+  const [route, navigate] = useHashRoute('');
   const live = useLiveUpdates(user?.id);
+
+  const groups = visibleGroups(isAdmin);
+  const routes = groups.flatMap((g) => g.routes);
+  // Rota inexistente ou restrita (ex.: parceiro abrindo #/prospeccao) cai na página inicial do papel.
+  const home = routes[0];
+  const current = routes.find((r) => r.path === route) ?? home;
+
+  // Corrige o endereço para a página realmente exibida (sem criar entrada no histórico).
+  useEffect(() => {
+    // Só com o papel carregado: antes disso um admin seria tratado como "sem permissão".
+    if (!isLoading && user && route !== current.path) window.history.replaceState(null, '', `#/${current.path}`);
+  }, [isLoading, user, route, current.path]);
 
   // Espera o papel do utilizador: sem isso o menu e o redirecionamento de rotas restritas
   // seriam calculados como "sem permissão" (F5 em #/equipe mandaria um admin para outra página).
@@ -73,9 +99,6 @@ export default function AppShell() {
     );
   }
 
-  const groups = GROUPS.filter((g) => !g.adminOnly || isAdmin);
-  const routes = groups.flatMap((g) => g.routes);
-  const current = routes.find((r) => r.path === route) ?? routes[0];
   const Page = current.element;
 
   const link = (r, compact = false) => {
@@ -102,7 +125,7 @@ export default function AppShell() {
   };
 
   const brand = (
-    <a href="#/prospeccao" onClick={(e) => { e.preventDefault(); navigate('prospeccao'); }} className="flex shrink-0 items-center gap-2.5">
+    <a href={`#/${home.path}`} onClick={(e) => { e.preventDefault(); navigate(home.path); }} className="flex shrink-0 items-center gap-2.5">
       <span className="flex size-9 items-center justify-center rounded-xl bg-linear-to-br from-red-700 to-red-950 text-white shadow-lg shadow-red-950/60 ring-1 ring-red-600/30">
         <Radar className="size-5" />
       </span>

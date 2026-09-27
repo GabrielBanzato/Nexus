@@ -1,4 +1,5 @@
 import { config } from '../config/env.js';
+import { requireRole } from '../plugins/auth.js';
 import { findJobById } from '../repositories/jobRepository.js';
 
 const scrapeBodySchema = {
@@ -12,6 +13,9 @@ const scrapeBodySchema = {
 };
 
 export default async function scrapeRoutes(app) {
+  // Painel de Prospecção (Radar/Scraper): exclusivo do admin. Demais papéis recebem 403.
+  app.addHook('preHandler', requireRole('admin'));
+
   app.post('/api/scrape', { schema: { body: scrapeBodySchema } }, async (request, reply) => {
     const searchTerm = request.body.termo.trim();
     const maxResults = request.body.maxResultados ?? config.scraper.maxResults;

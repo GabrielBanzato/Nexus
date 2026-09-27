@@ -174,7 +174,9 @@ export const getTriageSummary = () => request('/api/triage/summary').then(unwrap
 export const distributeLeads = (body) => request('/api/triage/distribute', json('POST', body)).then(unwrap);
 export const assignTriageLead = (leadId, assignedTo) =>
   request(`/api/triage/${leadId}/assign`, json('PATCH', { assigned_to: assignedTo })).then(unwrap);
-export const decideTriageLead = (leadId, body) => request(`/api/triage/${leadId}/decision`, json('POST', body)).then(unwrap);
+export const assignTriageLeads = (leadIds, assignedTo) =>
+  request('/api/triage/assign', json('POST', { lead_ids: leadIds, assigned_to: assignedTo })).then(unwrap);
+export const decideTriageLead =(leadId, body) => request(`/api/triage/${leadId}/decision`, json('POST', body)).then(unwrap);
 
 // Pipeline
 export const getDealBoard = (params) => request(`/api/deals/board${qs(params)}`);

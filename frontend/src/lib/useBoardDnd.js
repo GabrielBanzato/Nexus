@@ -12,6 +12,24 @@ import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
  *   atualização otimista do cache e a mutação).
  */
 
+/** Tempo que o dedo precisa ficar parado sobre o cartão para começar a arrastar. */
+export const TOUCH_DRAG_DELAY_MS = 1000;
+
+/**
+ * PointerSensor só para rato/caneta. Os eventos de ponteiro também disparam no toque (e antes
+ * do touchstart); sem este filtro o PointerSensor capturava o dedo, o navegador assumia o
+ * scroll e cancelava o arrasto. Assim, o toque fica só com o TouchSensor (toque longo).
+ */
+class MousePointerSensor extends PointerSensor {
+  static activators = [
+    {
+      eventName: 'onPointerDown',
+      handler: (event, options) =>
+        event.nativeEvent.pointerType !== 'touch' && PointerSensor.activators[0].handler(event, options),
+    },
+  ];
+}
+
 function findColumn(board, columnIds, id) {
   if (columnIds.includes(id)) return id;
   return columnIds.find((column) => board[column]?.some((item) => item.id === id));
@@ -117,15 +135,18 @@ export function useBoardDnd({ columnIds, serverBoard, columnField, filtered, onD
   );
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), // clique curto = abrir
-    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }), // toque longo = arrastar
+    useSensor(MousePointerSensor, { activationConstraint: { distance: 6 } }), // clique curto = abrir
+    // Toque: segurar parado 1s para arrastar. Mexer o dedo mais de 5px antes disso é scroll normal.
+    useSensor(TouchSensor, { activationConstraint: { delay: TOUCH_DRAG_DELAY_MS, tolerance: 5 } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: makeKeyboardCoordinates(columnIds),
       keyboardCodes: { start: ['Space'], cancel: ['Escape'], end: ['Space', 'Enter'] },
     }),
   );
 
-  const onDragStart = ({ active }) => {
+  const onDragStart = ({ active, activatorEvent }) => {
+    // No telemóvel, uma vibração curta confirma que o toque longo "pegou" o cartão.
+    if (activatorEvent?.type === 'touchstart') navigator.vibrate?.(15);
     lastOverId.current = null;
     const found = locate(board, columnIds, active.id);
     origin.current = { snapshot: board, column: found.column, index: found.index, position: found.item.position };

@@ -1,11 +1,12 @@
 import { publish } from '../lib/events.js';
-import { forbidden, notFound } from '../lib/errors.js';
-import { isManager, requireRole } from '../plugins/auth.js';
+import { notFound } from '../lib/errors.js';
+import { isAdmin, requireRole } from '../plugins/auth.js';
 import { logActivity } from '../repositories/activityLogRepository.js';
 import { OPEN_STAGES } from '../repositories/dealRepository.js';
 import {
   TRIAGE_STATUSES,
   assignLead,
+  assignLeads,
   decideLead,
   distributeLeads,
   findTriageByLeadId,
@@ -50,6 +51,18 @@ const assignSchema = {
   body: { type: 'object', required: ['assigned_to'], additionalProperties: false, properties: { assigned_to: nullableId } },
 };
 
+const bulkAssignSchema = {
+  body: {
+    type: 'object',
+    required: ['lead_ids', 'assigned_to'],
+    additionalProperties: false,
+    properties: {
+      lead_ids: { type: 'array', minItems: 1, maxItems: 500, uniqueItems: true, items: { type: 'integer', minimum: 1 } },
+      assigned_to: nullableId,
+    },
+  },
+};
+
 const decisionSchema = {
   params: idParam,
   body: {
@@ -78,25 +91,27 @@ const decisionSchema = {
 };
 
 export default async function triageRoutes(app) {
-  // Agentes veem só a própria fila; gestores veem tudo (e filtram por responsável).
+  // Privacidade: partners e agents veem só a própria fila (WHERE assigned_to = <próprio id>);
+  // apenas o admin vê tudo e pode filtrar por responsável ("Toda a equipe").
   app.get('/api/triage', { schema: listSchema }, async (request) => {
     const user = request.currentUser;
     const { status, q, nicho, grupo, limit, offset, mine } = request.query;
-    const assignedTo = !isManager(user) || mine ? user.id : request.query.assigned_to;
+    const assignedTo = !isAdmin(user) || mine ? user.id : request.query.assigned_to;
     return listTriage({ status, assignedTo, q, nicho, grupo, limit, offset });
   });
 
   app.get('/api/triage/summary', async (request) => {
     const user = request.currentUser;
-    const summary = await getTriageSummary({ assignedTo: isManager(user) ? undefined : user.id });
-    if (!isManager(user)) {
+    const summary = await getTriageSummary({ assignedTo: isAdmin(user) ? undefined : user.id });
+    if (!isAdmin(user)) {
       delete summary.workload; // carga da equipe é visão de gestão
       delete summary.unassigned;
     }
     return { data: summary };
   });
 
-  app.post('/api/triage/distribute', { schema: distributeSchema, preHandler: requireRole('admin', 'partner') }, async (request) => {
+  // Distribuir e reatribuir mexem na fila de outras pessoas: só o admin.
+  app.post('/api/triage/distribute', { schema: distributeSchema, preHandler: requireRole('admin') }, async (request) => {
     const { user_ids: userIds, limit, nicho, grupo, strategy } = request.body;
     const result = await distributeLeads({ userIds, limit, nicho, grupo, strategy });
     await logActivity(request, { action: 'triage.distribute', details: { ...result, strategy, filters: { nicho, grupo } } });
@@ -104,7 +119,19 @@ export default async function triageRoutes(app) {
     return { data: result };
   });
 
-  app.patch('/api/triage/:id/assign', { schema: assignSchema, preHandler: requireRole('admin', 'partner') }, async (request) => {
+  // Ação em massa da Triagem: transfere vários leads de uma vez (uma única UPDATE).
+  app.post('/api/triage/assign', { schema: bulkAssignSchema, preHandler: requireRole('admin') }, async (request) => {
+    const { lead_ids: leadIds, assigned_to: assignedTo } = request.body;
+    const result = await assignLeads(leadIds, assignedTo);
+    await logActivity(request, {
+      action: 'triage.assign_bulk',
+      details: { requested: leadIds.length, assigned: result.assigned, assigned_to: assignedTo },
+    });
+    publish('triage', request);
+    return { data: result };
+  });
+
+  app.patch('/api/triage/:id/assign', { schema: assignSchema, preHandler: requireRole('admin') }, async (request) => {
     const triage = await assignLead(request.params.id, request.body.assigned_to);
     await logActivity(request, {
       action: 'triage.assign',
@@ -120,12 +147,11 @@ export default async function triageRoutes(app) {
     const user = request.currentUser;
     const current = await findTriageByLeadId(request.params.id);
     if (!current) throw notFound('Lead');
-    // Agentes decidem os leads da sua fila e os ainda sem responsável (ex.: qualificados no Radar).
-    if (!isManager(user) && current.assigned_to && current.assigned_to !== user.id) {
-      throw forbidden(`Este lead está na fila de ${current.assigned_to_name ?? 'outro colaborador'}.`);
-    }
+    // Fora do admin, só se decide leads da própria fila e os ainda sem responsável. Lead da
+    // fila de outra pessoa responde 404, sem revelar de quem é.
+    if (!isAdmin(user) && current.assigned_to && current.assigned_to !== user.id) throw notFound('Lead');
     const body = { ...request.body };
-    if (body.deal && !isManager(user)) delete body.deal.owner_id; // agentes qualificam para si
+    if (body.deal && !isAdmin(user)) delete body.deal.owner_id; // não-admin qualifica para si
 
     const { triage, deal } = await decideLead(
       request.params.id,

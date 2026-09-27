@@ -43,6 +43,12 @@ export function requireRole(...roles) {
 
 export const isManager = (user) => user.role === 'admin' || user.role === 'partner';
 
+/**
+ * Visão de toda a equipe (filtro "Toda a equipe") é exclusiva do admin.
+ * Partners e agents só veem os leads/negócios/tarefas de que são responsáveis.
+ */
+export const isAdmin = (user) => user.role === 'admin';
+
 /** Assina o token de sessão de um utilizador. */
 export function signSessionToken(reply, user) {
   return reply.jwtSign({ sub: user.id, role: user.role, name: user.name });

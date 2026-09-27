@@ -1,6 +1,7 @@
 import { LEAD_GROUPS } from '../services/leadClassifier.js';
 import { publish } from '../lib/events.js';
 import { notFound } from '../lib/errors.js';
+import { requireRole } from '../plugins/auth.js';
 import { logActivity } from '../repositories/activityLogRepository.js';
 import {
   PROSPECT_STATUSES,
@@ -54,6 +55,10 @@ const visibilitySchema = {
 };
 
 export default async function leadRoutes(app) {
+  // Base bruta do Painel de Prospecção (todos os leads, sem dono): exclusiva do admin.
+  // Partners/agents trabalham os leads pela Triagem, já filtrada por responsável.
+  app.addHook('preHandler', requireRole('admin'));
+
   app.get('/api/leads', { schema: { querystring: leadsQuerySchema } }, async (request) => {
     return findLeads(request.query);
   });

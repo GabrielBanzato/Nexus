@@ -1,6 +1,6 @@
 import { publish } from '../lib/events.js';
 import { forbidden, notFound } from '../lib/errors.js';
-import { isManager, requireRole } from '../plugins/auth.js';
+import { isAdmin, requireRole } from '../plugins/auth.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
 import {
   DEAL_FIELDS,
@@ -69,30 +69,34 @@ const moveSchema = {
 
 const pick = (source, fields) => Object.fromEntries(fields.filter((f) => source[f] !== undefined).map((f) => [f, source[f]]));
 
-/** Agentes só mexem nos negócios de que são donos. */
-function assertCanEdit(user, deal) {
-  if (isManager(user) || deal.owner_id === user.id) return;
-  throw forbidden('Só o responsável pelo negócio (ou um gestor) pode alterá-lo.');
+/**
+ * Privacidade: fora do admin, cada um só acessa os negócios de que é dono.
+ * Negócio de outra pessoa responde 404 (não confirma que o id existe).
+ */
+async function findAccessibleDeal(user, id) {
+  const deal = await findDealById(id);
+  if (!deal || (!isAdmin(user) && deal.owner_id !== user.id)) throw notFound('Negócio');
+  return deal;
 }
 
 export default async function dealRoutes(app) {
   app.get('/api/deals/board', { schema: boardSchema }, async (request) => {
-    const ownerId = request.query.mine ? request.currentUser.id : request.query.owner_id;
+    const user = request.currentUser;
+    // Não-admin: WHERE owner_id = <próprio id>, ignorando qualquer owner_id vindo da query.
+    const ownerId = !isAdmin(user) || request.query.mine ? user.id : request.query.owner_id;
     const { board, totals } = await getDealBoard({ ownerId, q: request.query.q });
     return { data: board, meta: { stages: DEAL_STAGES, totals } };
   });
 
   app.get('/api/deals/:id', { schema: { params: idParam } }, async (request) => {
-    const deal = await findDealById(request.params.id);
-    if (!deal) throw notFound('Negócio');
-    return { data: deal };
+    return { data: await findAccessibleDeal(request.currentUser, request.params.id) };
   });
 
   app.post('/api/deals', { schema: createSchema }, async (request, reply) => {
     const user = request.currentUser;
     const fields = { ...pick(request.body, [...DEAL_FIELDS, 'lead_id']), stage: request.body.stage, created_by: user.id };
-    // Agentes criam negócios para si; gestores podem atribuir (sem dono = quem cria).
-    if (!isManager(user) || fields.owner_id === undefined) fields.owner_id = user.id;
+    // Não-admin cria negócios para si; o admin pode atribuir (sem dono = quem cria).
+    if (!isAdmin(user) || fields.owner_id === undefined) fields.owner_id = user.id;
 
     const deal = await createDeal(fields);
     await logActivity(request, {
@@ -107,11 +111,9 @@ export default async function dealRoutes(app) {
 
   app.patch('/api/deals/:id', { schema: updateSchema }, async (request) => {
     const user = request.currentUser;
-    const before = await findDealById(request.params.id);
-    if (!before) throw notFound('Negócio');
-    assertCanEdit(user, before);
-    if (!isManager(user) && request.body.owner_id !== undefined && request.body.owner_id !== user.id) {
-      throw forbidden('Apenas admin/partner podem transferir um negócio para outra pessoa.');
+    const before = await findAccessibleDeal(user, request.params.id);
+    if (!isAdmin(user) && request.body.owner_id !== undefined && request.body.owner_id !== user.id) {
+      throw forbidden('Apenas o admin pode transferir um negócio para outra pessoa.');
     }
 
     const fields = pick(request.body, DEAL_FIELDS);
@@ -128,9 +130,7 @@ export default async function dealRoutes(app) {
 
   // Drag-and-drop entre estágios.
   app.patch('/api/deals/:id/move', { schema: moveSchema }, async (request) => {
-    const before = await findDealById(request.params.id);
-    if (!before) throw notFound('Negócio');
-    assertCanEdit(request.currentUser, before);
+    const before = await findAccessibleDeal(request.currentUser, request.params.id);
 
     const { stage, position, lost_reason: lostReason } = request.body;
     const { deal, from, to, clientCreatedId } = await moveDeal(before.id, { stage, position, lostReason });
@@ -157,14 +157,25 @@ export default async function dealRoutes(app) {
     return { data: deal, meta: { client_created_id: clientCreatedId } };
   });
 
+  // Remover do pipeline devolve o lead de origem à fila da Triagem (ver deleteDeal).
   app.delete('/api/deals/:id', { schema: { params: idParam }, preHandler: requireRole('admin', 'partner') }, async (request, reply) => {
-    const removed = await deleteDeal(request.params.id);
+    const existing = await findAccessibleDeal(request.currentUser, request.params.id);
+    const removed = await deleteDeal(existing.id);
     await logActivity(request, {
       action: 'deal.delete',
       entityType: 'deal',
       entityId: removed.id,
-      details: { title: removed.title, value: removed.value, stage: removed.stage },
+      details: { title: removed.title, value: removed.value, stage: removed.stage, requeued_lead_id: removed.requeued_lead_id ?? undefined },
     });
+    if (removed.requeued_lead_id) {
+      await logActivity(request, {
+        action: 'triage.requeue',
+        entityType: 'lead',
+        entityId: removed.requeued_lead_id,
+        details: { from_deal: removed.id, title: removed.title },
+      });
+      publish('triage', request);
+    }
     publish('deals', request);
     return reply.code(204).send();
   });

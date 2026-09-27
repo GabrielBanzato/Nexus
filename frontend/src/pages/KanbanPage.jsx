@@ -88,7 +88,8 @@ function SortableTask({ task, onOpen }) {
         }
         listeners?.onKeyDown?.(event);
       }}
-      className={cx('touch-manipulation rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-red-600', isDragging && 'opacity-30')}
+      // select-none + sem callout: o toque longo que inicia o arrasto não seleciona texto nem abre menu (iOS/Android).
+      className={cx('touch-manipulation rounded-xl outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-red-600', isDragging && 'opacity-30')}
     >
       <TaskCard task={task} />
     </div>

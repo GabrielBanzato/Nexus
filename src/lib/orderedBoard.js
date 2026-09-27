@@ -125,8 +125,12 @@ export function createOrderedBoard({ table, columnField, notFound }) {
       });
     },
 
-    /** Remove o item e fecha o buraco na coluna. @returns {Promise<object>} linha removida */
-    remove(id) {
+    /**
+     * Remove o item e fecha o buraco na coluna.
+     * `afterRemove(trx, row)` roda na mesma transação (ex.: devolver o lead à triagem).
+     * @returns {Promise<object>} linha removida
+     */
+    remove(id, afterRemove) {
       return run(async () => {
         const hint = await db(table).select(columnField).where({ id }).first();
         if (!hint) throw notFound();
@@ -139,6 +143,7 @@ export function createOrderedBoard({ table, columnField, notFound }) {
 
           await trx(table).where({ id }).delete();
           await trx(table).where(columnField, row[columnField]).andWhere('position', '>', row.position).decrement('position', 1);
+          if (afterRemove) await afterRemove(trx, row);
           return row;
         });
       });

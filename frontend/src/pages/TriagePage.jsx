@@ -1,11 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CircleCheck, CircleX, Globe, Hourglass, Inbox, Keyboard, MapPin, Phone, Search, Shuffle, Star, UserRound } from 'lucide-react';
-import { assignTriageLead, decideTriageLead, distributeLeads, getTriageSummary, listTriage } from '../lib/api.js';
+import {
+  CircleCheck,
+  CircleX,
+  Globe,
+  Hourglass,
+  Inbox,
+  Keyboard,
+  LayoutGrid,
+  List,
+  MapPin,
+  MapPinned,
+  Phone,
+  Search,
+  Shuffle,
+  Star,
+  Tag,
+  UserRound,
+  UserRoundCheck,
+  X,
+} from 'lucide-react';
+import { assignTriageLead, assignTriageLeads, decideTriageLead, distributeLeads, getTriageSummary, listTriage } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
 import { OPEN_DEAL_STAGES, ROLE_META, TRIAGE_STATUS_META, formatRelative, parseMoney } from '../lib/labels.js';
 import { useToast } from '../components/toast.jsx';
+import { GroupBadge, Rating, WhatsAppButton, cardClass, shortAddress } from '../components/leadVisuals.jsx';
 import {
   Avatar,
   Badge,
@@ -14,6 +34,7 @@ import {
   EmptyState,
   ErrorState,
   Field,
+  IconButton,
   Modal,
   PageHeader,
   Pagination,
@@ -28,13 +49,84 @@ import {
 
 const PAGE_SIZE = 25;
 const STATUS_ORDER = ['pending', 'on_hold', 'qualified', 'discarded'];
+const VIEW_STORAGE_KEY = 'nexus:triageView';
+
+const isActionable = (status) => status === 'pending' || status === 'on_hold';
+const checkboxClass = 'size-4 shrink-0 cursor-pointer accent-red-700';
+
+// ---------------------------------------------------------------------------
+// Preferência de layout (Lista / Caixas), lembrada por navegador
+// ---------------------------------------------------------------------------
+
+function useViewMode() {
+  const [view, setView] = useState(() => {
+    try {
+      return localStorage.getItem(VIEW_STORAGE_KEY) === 'grid' ? 'grid' : 'list';
+    } catch {
+      return 'list';
+    }
+  });
+  const change = (next) => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, next);
+    } catch {
+      // Storage indisponível: a escolha vale só nesta sessão.
+    }
+  };
+  return [view, change];
+}
+
+function ViewToggle({ value, onChange }) {
+  const options = [
+    { value: 'list', label: 'Modo lista', icon: List },
+    { value: 'grid', label: 'Modo caixas', icon: LayoutGrid },
+  ];
+  return (
+    <div role="group" aria-label="Layout da triagem" className="inline-flex shrink-0 rounded-xl border border-neutral-800 p-0.5">
+      {options.map(({ value: v, label, icon: Icon }) => (
+        <button
+          key={v}
+          type="button"
+          aria-label={label}
+          aria-pressed={value === v}
+          title={label}
+          onClick={() => onChange(v)}
+          className={cx(
+            'inline-flex size-9 items-center justify-center rounded-[10px] transition',
+            value === v ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-200',
+          )}
+        >
+          <Icon className="size-4" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Atalhos de teclado (linha ou caixa focada): Q qualificar, E espera, D descartar
+// ---------------------------------------------------------------------------
+
+function queueKeyHandler({ lead, status, onDecide }) {
+  return (event) => {
+    if (event.target !== event.currentTarget) return;
+    const key = event.key.toLowerCase();
+    if (key === 'arrowdown' || key === 'arrowright') event.currentTarget.nextElementSibling?.focus();
+    if (key === 'arrowup' || key === 'arrowleft') event.currentTarget.previousElementSibling?.focus();
+    if (!isActionable(status)) return;
+    if (key === 'q') onDecide(lead, 'qualified');
+    if (key === 'e' && status !== 'on_hold') onDecide(lead, 'on_hold');
+    if (key === 'd') onDecide(lead, 'discarded');
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Decisão (qualificar / espera / descartar)
 // ---------------------------------------------------------------------------
 
 function DecisionModal({ lead, status, onClose, onDone }) {
-  const { isManager } = useAuth();
+  const { isAdmin } = useAuth();
   const { data: users = [] } = useUserDirectory();
   const [form, setForm] = useState({
     title: lead.name,
@@ -70,7 +162,7 @@ function DecisionModal({ lead, status, onClose, onDone }) {
         stage: form.stage,
         expected_close_date: form.expected_close_date || null,
       };
-      if (isManager && form.owner_id) body.deal.owner_id = Number(form.owner_id);
+      if (isAdmin && form.owner_id) body.deal.owner_id = Number(form.owner_id);
     }
     if (status === 'on_hold') body.hold_until = form.hold_until || null;
     mutation.mutate(body);
@@ -125,7 +217,7 @@ function DecisionModal({ lead, status, onClose, onDone }) {
                     </Select>
                   )}
                 </Field>
-                {isManager && (
+                {isAdmin && (
                   <Field label="Responsável">
                     {({ id }) => (
                       <Select id={id} value={form.owner_id} onChange={set('owner_id')}>
@@ -276,85 +368,267 @@ function DistributeModal({ open, onClose, workload, unassigned }) {
 }
 
 // ---------------------------------------------------------------------------
-// Linha da fila
+// Ações em massa (admin)
 // ---------------------------------------------------------------------------
 
-function LeadRow({ lead, status, isManager, users, onDecide, onAssign }) {
-  const actionable = status === 'pending' || status === 'on_hold';
-  const city = (lead.address ?? '').replace(/,?\s*\d{5}-?\d{3}\s*$/, '').split(',').slice(-1)[0]?.trim();
+/**
+ * Barra acima da lista. Sem seleção, mostra só "Selecionar todos"; com pelo menos um lead
+ * selecionado, vira a Action Bar com "Atribuir a responsável".
+ */
+function BulkActionBar({ selectableIds, selected, onSelectAll, onClear, users, onAssign, assigning }) {
+  const [target, setTarget] = useState('');
+  const count = selected.size;
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+  const selectAllRef = useRef(null);
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = count > 0 && !allSelected;
+  }, [count, allSelected]);
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (!target) return;
+    onAssign(target === 'none' ? null : Number(target), () => setTarget(''));
+  };
 
   return (
-    <li
-      tabIndex={0}
-      aria-label={`${lead.name}. Atalhos: Q qualificar, E em espera, D descartar.`}
-      onKeyDown={(event) => {
-        if (!actionable || event.target !== event.currentTarget) return;
-        const key = event.key.toLowerCase();
-        if (key === 'q') onDecide(lead, 'qualified');
-        if (key === 'e' && status !== 'on_hold') onDecide(lead, 'on_hold');
-        if (key === 'd') onDecide(lead, 'discarded');
-        if (key === 'arrowdown') event.currentTarget.nextElementSibling?.focus();
-        if (key === 'arrowup') event.currentTarget.previousElementSibling?.focus();
-      }}
-      className="group flex flex-col gap-3 px-4 py-3.5 outline-none focus-visible:bg-neutral-800/40 focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-inset lg:flex-row lg:items-center"
+    <div
+      role="region"
+      aria-label="Ações em massa"
+      className={cx(
+        // Abaixo do cabeçalho fixo do AppShell no telemóvel (~62px); no desktop não há cabeçalho.
+        'sticky top-18 z-30 flex lg:top-4 flex-col gap-3 rounded-xl border px-4 py-2.5 backdrop-blur transition sm:flex-row sm:items-center',
+        count ? 'border-red-900/60 bg-red-950/40' : 'border-neutral-800 bg-neutral-950/60',
+      )}
     >
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="truncate font-semibold text-white">{lead.name}</p>
-          {lead.lead_group === 'SEM_SITE' ? (
-            <Badge tone="red">Sem site</Badge>
-          ) : (
-            <Badge tone="emerald"><Globe className="size-3" />Com site</Badge>
-          )}
-        </div>
-        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
-          {lead.category && <span>{lead.category}</span>}
-          {city && <span className="flex items-center gap-1"><MapPin className="size-3" />{city}</span>}
-          {lead.rating && <span className="flex items-center gap-1"><Star className="size-3 fill-amber-400 text-amber-400" />{String(lead.rating).replace('.', ',')} ({lead.reviews_count ?? 0})</span>}
-          {lead.phone && <span className="flex items-center gap-1"><Phone className="size-3" />{lead.phone}</span>}
-          {status !== 'pending' && lead.triaged_at && (
-            <span>{TRIAGE_STATUS_META[status].label} por {lead.triaged_by_name ?? '—'} {formatRelative(lead.triaged_at)}</span>
-          )}
-          {status === 'on_hold' && lead.hold_until && <span className="text-amber-300">Retomar em {new Date(`${lead.hold_until}T12:00:00`).toLocaleDateString('pt-PT')}</span>}
-        </p>
-        {lead.notes && status !== 'pending' && <p className="mt-1.5 line-clamp-2 text-sm text-neutral-400">“{lead.notes}”</p>}
-      </div>
+      <label className="flex cursor-pointer items-center gap-2.5 text-sm text-neutral-300">
+        <input ref={selectAllRef} type="checkbox" checked={allSelected} onChange={() => (allSelected ? onClear() : onSelectAll())} className={checkboxClass} />
+        {count ? (
+          <span>
+            <strong className="font-semibold text-white tabular-nums">{count}</strong> {count === 1 ? 'lead selecionado' : 'leads selecionados'}
+          </span>
+        ) : (
+          <span>Selecionar todos da página ({selectableIds.length})</span>
+        )}
+      </label>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {isManager ? (
-          <Select
-            aria-label={`Responsável por ${lead.name}`}
-            value={lead.assigned_to ?? ''}
-            onChange={(e) => onAssign(lead, e.target.value ? Number(e.target.value) : null)}
-            disabled={!actionable}
-            className="h-8 w-40 text-xs"
-          >
-            <option value="">Sem responsável</option>
+      {count > 0 && (
+        <form onSubmit={submit} className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          <Select aria-label="Novo responsável" value={target} onChange={(e) => setTarget(e.target.value)} className="h-8 w-52 text-xs">
+            <option value="" disabled>Escolher responsável…</option>
+            <option value="none">Sem responsável</option>
             {users.map((u) => (
               <option key={u.id} value={u.id}>{u.name}</option>
             ))}
           </Select>
-        ) : (
-          lead.assigned_to && (
-            <span className="flex items-center gap-1.5 text-xs text-neutral-400">
-              <Avatar name={lead.assigned_to_name ?? '?'} id={lead.assigned_to} size="xs" />
-              {lead.assigned_to_name}
-            </span>
-          )
-        )}
+          <Button type="submit" size="sm" icon={UserRoundCheck} loading={assigning} disabled={!target}>
+            Atribuir a responsável
+          </Button>
+          <IconButton icon={X} label="Limpar seleção" onClick={onClear} />
+        </form>
+      )}
+    </div>
+  );
+}
 
-        {actionable && (
-          <>
-            <Button size="sm" icon={CircleCheck} onClick={() => onDecide(lead, 'qualified')} title="Qualificar (Q)">Qualificar</Button>
-            {status !== 'on_hold' && (
-              <Button size="sm" variant="secondary" icon={Hourglass} onClick={() => onDecide(lead, 'on_hold')} title="Em espera (E)">Espera</Button>
-            )}
-            <Button size="sm" variant="ghost" icon={CircleX} onClick={() => onDecide(lead, 'discarded')} title="Descartar (D)">Descartar</Button>
-          </>
+// ---------------------------------------------------------------------------
+// Peças comuns a linha e caixa
+// ---------------------------------------------------------------------------
+
+function AssigneeControl({ lead, status, isAdmin, users, onAssign, className }) {
+  if (isAdmin) {
+    return (
+      <Select
+        aria-label={`Responsável por ${lead.name}`}
+        value={lead.assigned_to ?? ''}
+        onChange={(e) => onAssign(lead, e.target.value ? Number(e.target.value) : null)}
+        disabled={!isActionable(status)}
+        className={cx('h-8 text-xs', className)}
+      >
+        <option value="">Sem responsável</option>
+        {users.map((u) => (
+          <option key={u.id} value={u.id}>{u.name}</option>
+        ))}
+      </Select>
+    );
+  }
+  if (!lead.assigned_to) return null;
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-neutral-400">
+      <Avatar name={lead.assigned_to_name ?? '?'} id={lead.assigned_to} size="xs" />
+      {lead.assigned_to_name}
+    </span>
+  );
+}
+
+function DecisionButtons({ lead, status, onDecide, stretch = false }) {
+  if (status === 'qualified') return <Badge tone="emerald" dot>No pipeline</Badge>;
+  if (!isActionable(status)) return null;
+  const grow = stretch && 'flex-1';
+  return (
+    <>
+      <Button size="sm" icon={CircleCheck} onClick={() => onDecide(lead, 'qualified')} title="Qualificar (Q)" className={grow}>Qualificar</Button>
+      {status !== 'on_hold' && (
+        <Button size="sm" variant="secondary" icon={Hourglass} onClick={() => onDecide(lead, 'on_hold')} title="Em espera (E)" className={grow}>Espera</Button>
+      )}
+      <Button size="sm" variant="ghost" icon={CircleX} onClick={() => onDecide(lead, 'discarded')} title="Descartar (D)" className={grow}>Descartar</Button>
+    </>
+  );
+}
+
+function TriageMeta({ lead, status }) {
+  return (
+    <>
+      {status !== 'pending' && lead.triaged_at && (
+        <span>{TRIAGE_STATUS_META[status].label} por {lead.triaged_by_name ?? '—'} {formatRelative(lead.triaged_at)}</span>
+      )}
+      {status === 'on_hold' && lead.hold_until && (
+        <span className="text-amber-300">Retomar em {new Date(`${lead.hold_until}T12:00:00`).toLocaleDateString('pt-PT')}</span>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modo Lista
+// ---------------------------------------------------------------------------
+
+function LeadRow({ lead, status, isAdmin, users, selectable, selected, onToggleSelect, onDecide, onAssign }) {
+  const city = (lead.address ?? '').replace(/,?\s*\d{5}-?\d{3}\s*$/, '').split(',').slice(-1)[0]?.trim();
+
+  return (
+    <li
+      data-triage-item
+      tabIndex={0}
+      aria-label={`${lead.name}. Atalhos: Q qualificar, E em espera, D descartar.`}
+      onKeyDown={queueKeyHandler({ lead, status, onDecide })}
+      className={cx(
+        'group flex flex-col gap-3 px-4 py-3.5 outline-none focus-visible:bg-neutral-800/40 focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-inset lg:flex-row lg:items-center',
+        selected && 'bg-red-950/15',
+      )}
+    >
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        {isAdmin && (
+          <input
+            type="checkbox"
+            aria-label={`Selecionar ${lead.name}`}
+            checked={selected}
+            disabled={!selectable}
+            onChange={() => onToggleSelect(lead.id)}
+            className={cx(checkboxClass, 'mt-1 disabled:cursor-not-allowed disabled:opacity-30')}
+          />
         )}
-        {status === 'qualified' && <Badge tone="emerald" dot>No pipeline</Badge>}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="truncate font-semibold text-white">{lead.name}</p>
+            {lead.lead_group === 'SEM_SITE' ? (
+              <Badge tone="red">Sem site</Badge>
+            ) : (
+              <Badge tone="emerald"><Globe className="size-3" />Com site</Badge>
+            )}
+          </div>
+          <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-500">
+            {lead.category && <span>{lead.category}</span>}
+            {city && <span className="flex items-center gap-1"><MapPin className="size-3" />{city}</span>}
+            {lead.rating && <span className="flex items-center gap-1"><Star className="size-3 fill-amber-400 text-amber-400" />{String(lead.rating).replace('.', ',')} ({lead.reviews_count ?? 0})</span>}
+            {lead.phone && <span className="flex items-center gap-1"><Phone className="size-3" />{lead.phone}</span>}
+            <TriageMeta lead={lead} status={status} />
+          </p>
+          {lead.notes && status !== 'pending' && <p className="mt-1.5 line-clamp-2 text-sm text-neutral-400">“{lead.notes}”</p>}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 pl-7 lg:pl-0">
+        <AssigneeControl lead={lead} status={status} isAdmin={isAdmin} users={users} onAssign={onAssign} className="w-40" />
+        <WhatsAppButton lead={lead} variant="icon" />
+        <DecisionButtons lead={lead} status={status} onDecide={onDecide} />
       </div>
     </li>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modo Caixas (mesmo visual dos cards do Painel de Prospecção)
+// ---------------------------------------------------------------------------
+
+function LeadBox({ lead, status, isAdmin, users, selectable, selected, onToggleSelect, onDecide, onAssign }) {
+  return (
+    <article
+      data-triage-item
+      tabIndex={0}
+      aria-label={`${lead.name}. Atalhos: Q qualificar, E em espera, D descartar.`}
+      onKeyDown={queueKeyHandler({ lead, status, onDecide })}
+      className={cx(
+        cardClass,
+        'outline-none focus-visible:ring-2 focus-visible:ring-red-700',
+        selected ? 'border-red-800 bg-red-950/10' : 'border-neutral-800',
+      )}
+    >
+      <div className="flex items-start gap-3">
+        {isAdmin && (
+          <input
+            type="checkbox"
+            aria-label={`Selecionar ${lead.name}`}
+            checked={selected}
+            disabled={!selectable}
+            onChange={() => onToggleSelect(lead.id)}
+            className={cx(checkboxClass, 'mt-1 disabled:cursor-not-allowed disabled:opacity-30')}
+          />
+        )}
+        <h3 className="line-clamp-2 min-w-0 flex-1 text-base leading-snug font-semibold text-white" title={lead.name}>
+          {lead.name}
+        </h3>
+        <GroupBadge group={lead.lead_group} />
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {lead.category && (
+          <span className="inline-flex items-center gap-1.5 rounded-md bg-neutral-800 px-2 py-0.5 text-xs font-medium text-neutral-300">
+            <Tag className="size-3 text-red-500" />
+            {lead.category}
+          </span>
+        )}
+        <p className="flex items-start gap-1.5 text-sm text-neutral-400" title={lead.address || undefined}>
+          <MapPin className="mt-0.5 size-4 shrink-0 text-neutral-600" />
+          <span className="line-clamp-2">{shortAddress(lead.address)}</span>
+        </p>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <Rating rating={lead.rating} reviewsCount={lead.reviews_count} />
+        {status !== 'pending' && <Badge tone={TRIAGE_STATUS_META[status].tone}>{TRIAGE_STATUS_META[status].label}</Badge>}
+      </div>
+
+      {(lead.triaged_at || lead.hold_until) && (
+        <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-500">
+          <TriageMeta lead={lead} status={status} />
+        </p>
+      )}
+      {lead.notes && status !== 'pending' && <p className="mt-2 line-clamp-2 text-sm text-neutral-400">“{lead.notes}”</p>}
+
+      <div className="mt-4 mb-1">
+        <AssigneeControl lead={lead} status={status} isAdmin={isAdmin} users={users} onAssign={onAssign} className="w-full" />
+      </div>
+
+      <div className="mt-auto space-y-2 border-t border-neutral-800 pt-4">
+        <WhatsAppButton lead={lead} />
+        <div className="flex flex-wrap items-center gap-2">
+          <DecisionButtons lead={lead} status={status} onDecide={onDecide} stretch />
+          {lead.maps_url && (
+            <a
+              href={lead.maps_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Abrir no Google Maps"
+              aria-label={`Abrir ${lead.name} no Google Maps`}
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+            >
+              <MapPinned className="size-4" />
+            </a>
+          )}
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -363,22 +637,26 @@ function LeadRow({ lead, status, isManager, users, onDecide, onAssign }) {
 // ---------------------------------------------------------------------------
 
 export default function TriagePage({ navigate }) {
-  const { isManager } = useAuth();
+  const { isAdmin } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
   const { data: users = [] } = useUserDirectory();
+  const [view, setView] = useViewMode();
   const [status, setStatus] = useState('pending');
   const [assignee, setAssignee] = useState(''); // '' = todos, 'none' = sem responsável, id
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
   const [decision, setDecision] = useState(null); // { lead, status }
   const [distributing, setDistributing] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
   const q = useDebouncedValue(search.trim());
   const refocusQueue = useRef(false);
 
-  const params = { status, assigned_to: assignee || undefined, q, limit: PAGE_SIZE, offset };
+  const params = { status, assigned_to: (isAdmin && assignee) || undefined, q, limit: PAGE_SIZE, offset };
   const list = useQuery({ queryKey: ['triage', 'list', params], queryFn: () => listTriage(params), placeholderData: keepPreviousData });
   const summary = useQuery({ queryKey: ['triage', 'summary'], queryFn: getTriageSummary });
+
+  const clearSelection = () => setSelected(new Set());
 
   const assignMutation = useMutation({
     mutationFn: ({ lead, userId }) => assignTriageLead(lead.id, userId),
@@ -387,6 +665,22 @@ export default function TriagePage({ navigate }) {
       toast.success('Responsável atualizado', `${triage.name} → ${triage.assigned_to_name ?? 'sem responsável'}`);
     },
     onError: (err) => toast.error('Não foi possível atribuir', err.message),
+  });
+
+  const bulkAssignMutation = useMutation({
+    mutationFn: ({ leadIds, userId }) => assignTriageLeads(leadIds, userId),
+    onSuccess: ({ assigned }, { leadIds, userId, onDone }) => {
+      queryClient.invalidateQueries({ queryKey: ['triage'] });
+      const name = userId ? users.find((u) => u.id === userId)?.name ?? 'responsável' : 'sem responsável';
+      const skipped = leadIds.length - assigned;
+      toast.success(
+        `${assigned} ${assigned === 1 ? 'lead atribuído' : 'leads atribuídos'}`,
+        `→ ${name}${skipped ? ` · ${skipped} ignorado(s): já saíram da fila` : ''}`,
+      );
+      clearSelection();
+      onDone?.();
+    },
+    onError: (err) => toast.error('Não foi possível atribuir os leads', err.message),
   });
 
   const handleDone = (result, decided) => {
@@ -402,19 +696,51 @@ export default function TriagePage({ navigate }) {
     refocusQueue.current = true;
   };
 
+  // Trocar filtro ou página muda os leads visíveis: a seleção deixa de fazer sentido.
   const changeFilter = (setter) => (value) => {
     setter(value);
     setOffset(0);
+    clearSelection();
   };
+  const changePage = (next) => {
+    setOffset(next);
+    clearSelection();
+  };
+
+  const toggleSelect = (id) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   useEffect(() => {
     if (!refocusQueue.current || list.isFetching) return;
     refocusQueue.current = false;
-    document.querySelector('[data-triage-list] li')?.focus();
+    document.querySelector('[data-triage-list] [data-triage-item]')?.focus();
   }, [list.data, list.isFetching]);
 
   const counts = summary.data?.counts;
   const leads = list.data?.data ?? [];
+  // Só leads ainda na fila (pendente/em espera) podem ser reatribuídos.
+  const selectableIds = leads.filter((l) => isActionable(l.triage_status)).map((l) => l.id);
+  // Ignora ids que saíram da página (ex.: decididos por outra pessoa em tempo real).
+  const visibleSelection = new Set(selectableIds.filter((id) => selected.has(id)));
+
+  const itemProps = (lead) => ({
+    lead,
+    status: lead.triage_status,
+    isAdmin,
+    users,
+    selectable: isActionable(lead.triage_status),
+    selected: visibleSelection.has(lead.id),
+    onToggleSelect: toggleSelect,
+    onDecide: (l, s) => setDecision({ lead: l, status: s }),
+    onAssign: (l, userId) => assignMutation.mutate({ lead: l, userId }),
+  });
+
+  const pagination = list.data?.meta.total > PAGE_SIZE && <Pagination meta={list.data.meta} onChange={changePage} />;
 
   return (
     <div className="space-y-5">
@@ -422,7 +748,7 @@ export default function TriagePage({ navigate }) {
         title="Triagem de leads"
         description="Qualifique os leads da prospecção: os qualificados entram no pipeline como negócio."
         actions={
-          isManager && (
+          isAdmin && (
             <Button icon={Shuffle} onClick={() => setDistributing(true)} disabled={!summary.data}>
               Distribuir leads
               {summary.data?.unassigned > 0 && <span className="rounded-md bg-red-950/70 px-1.5 text-xs tabular-nums">{summary.data.unassigned}</span>}
@@ -439,7 +765,8 @@ export default function TriagePage({ navigate }) {
           options={STATUS_ORDER.map((s) => ({ value: s, label: TRIAGE_STATUS_META[s].label, count: counts?.[s] }))}
         />
         <div className="flex flex-wrap items-center gap-2">
-          {isManager && (
+          {/* "Toda a equipe" é visão exclusiva do admin; os demais só veem a própria fila. */}
+          {isAdmin && (
             <Select aria-label="Filtrar por responsável" value={assignee} onChange={(e) => changeFilter(setAssignee)(e.target.value)} className="w-48">
               <option value="">Toda a equipe</option>
               <option value="none">Sem responsável</option>
@@ -453,10 +780,11 @@ export default function TriagePage({ navigate }) {
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-neutral-500" />
             <input type="search" value={search} onChange={(e) => changeFilter(setSearch)(e.target.value)} placeholder="Nome, endereço, telefone" className={cx(inputClass, 'pl-9')} />
           </label>
+          <ViewToggle value={view} onChange={setView} />
         </div>
       </div>
 
-      {isManager && summary.data?.workload && (
+      {isAdmin && summary.data?.workload && (
         <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Carga por membro">
           {summary.data.workload
             .filter((w) => w.open > 0 || w.role !== 'admin')
@@ -478,6 +806,18 @@ export default function TriagePage({ navigate }) {
         </div>
       )}
 
+      {isAdmin && selectableIds.length > 0 && (
+        <BulkActionBar
+          selectableIds={selectableIds}
+          selected={visibleSelection}
+          onSelectAll={() => setSelected(new Set(selectableIds))}
+          onClear={clearSelection}
+          users={users}
+          assigning={bulkAssignMutation.isPending}
+          onAssign={(userId, onDone) => bulkAssignMutation.mutate({ leadIds: [...visibleSelection], userId, onDone })}
+        />
+      )}
+
       {list.isError ? (
         <ErrorState error={list.error} onRetry={list.refetch} />
       ) : list.isLoading ? (
@@ -488,40 +828,37 @@ export default function TriagePage({ navigate }) {
           title={status === 'pending' ? 'Fila vazia' : `Nenhum lead ${TRIAGE_STATUS_META[status].label.toLowerCase()}`}
           description={
             status === 'pending'
-              ? isManager
+              ? isAdmin
                 ? 'Não há leads à espera de triagem com estes filtros. Rode o Radar de Busca ou distribua leads sem responsável.'
-                : 'Não há leads atribuídos a si. Assim que um gestor distribuir leads, eles aparecem aqui.'
+                : 'Não há leads atribuídos a si. Assim que o admin distribuir leads, eles aparecem aqui.'
               : 'Ajuste os filtros para ver outros leads.'
           }
-          action={status === 'pending' && isManager && <Button variant="secondary" onClick={() => navigate('prospeccao')}>Ir para a Prospecção</Button>}
+          action={status === 'pending' && isAdmin && <Button variant="secondary" onClick={() => navigate('prospeccao')}>Ir para a Prospecção</Button>}
         />
+      ) : view === 'grid' ? (
+        <div className={cx('space-y-4 transition-opacity', list.isFetching && 'opacity-70')}>
+          <div data-triage-list className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {leads.map((lead) => (
+              <LeadBox key={lead.id} {...itemProps(lead)} />
+            ))}
+          </div>
+          {pagination}
+        </div>
       ) : (
         <Card className={cx('overflow-hidden transition-opacity', list.isFetching && 'opacity-70')}>
           <ul data-triage-list className="divide-y divide-neutral-800">
             {leads.map((lead) => (
-              <LeadRow
-                key={lead.id}
-                lead={lead}
-                status={lead.triage_status}
-                isManager={isManager}
-                users={users}
-                onDecide={(l, s) => setDecision({ lead: l, status: s })}
-                onAssign={(l, userId) => assignMutation.mutate({ lead: l, userId })}
-              />
+              <LeadRow key={lead.id} {...itemProps(lead)} />
             ))}
           </ul>
-          {list.data.meta.total > PAGE_SIZE && (
-            <div className="border-t border-neutral-800 px-4 py-3">
-              <Pagination meta={list.data.meta} onChange={setOffset} />
-            </div>
-          )}
+          {pagination && <div className="border-t border-neutral-800 px-4 py-3">{pagination}</div>}
         </Card>
       )}
 
-      {(status === 'pending' || status === 'on_hold') && leads.length > 0 && (
+      {isActionable(status) && leads.length > 0 && (
         <p className="hidden items-center gap-1.5 text-xs text-neutral-600 sm:flex">
           <Keyboard className="size-3.5" />
-          Triagem rápida: foque um lead (Tab ou ↑/↓) e use Q para qualificar, E para pôr em espera, D para descartar.
+          Triagem rápida: foque um lead (Tab ou setas) e use Q para qualificar, E para pôr em espera, D para descartar.
         </p>
       )}
 
@@ -544,7 +881,7 @@ export default function TriagePage({ navigate }) {
         />
       )}
 
-      {!isManager && counts && (
+      {!isAdmin && counts && (
         <p className="flex items-center gap-1.5 text-xs text-neutral-500">
           <UserRound className="size-3.5" />
           Está a ver a sua fila: {counts.pending} por triar, {counts.on_hold} em espera.

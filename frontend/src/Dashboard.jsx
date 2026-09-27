@@ -18,14 +18,11 @@ import {
   LoaderCircle,
   MapPin,
   MapPinned,
-  MessageCircle,
-  PhoneOff,
   Radar,
   RefreshCw,
   Search,
   SearchX,
   SlidersHorizontal,
-  Star,
   Tag,
   TriangleAlert,
   X,
@@ -44,7 +41,7 @@ import { useAuth } from './lib/auth.jsx';
 import { formatRelative } from './lib/labels.js';
 import { useHashRoute } from './lib/useHashRoute.js';
 import { exportLeadsCsv } from './utils/csv.js';
-import { gerarLinkWhatsApp } from './utils/whatsapp.js';
+import { GroupBadge, Rating, WhatsAppButton, cardClass, secondaryButtonClass, shortAddress } from './components/leadVisuals.jsx';
 
 // ---------------------------------------------------------------------------
 // Configuração
@@ -82,7 +79,6 @@ const DEFAULT_FILTERS = { nicho: '', grupo: '', contato: 'todos', visibilidade: 
 const TOGGLEABLE_CONTACT = new Set(['NOVO', 'CONTATADO']);
 
 const numberFormat = new Intl.NumberFormat('pt-BR');
-const ratingFormat = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 // ---------------------------------------------------------------------------
 // Persistência local
@@ -116,15 +112,6 @@ const jobStorage = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Remove CEP e país: "R. X, 10 - Centro, Campinas - SP, 13000-000" -> "R. X, 10 - Centro, Campinas - SP". */
-function shortAddress(address) {
-  if (!address) return 'Endereço não informado';
-  return address
-    .replace(/,?\s*\d{5}-?\d{3}\s*$/, '')
-    .replace(/,?\s*Brasil\s*$/i, '')
-    .trim();
-}
 
 // ---------------------------------------------------------------------------
 // Hooks
@@ -225,9 +212,6 @@ function useScrapeJob({ onFinish }) {
 
 const fieldClass =
   'h-11 w-full rounded-xl border border-neutral-800 bg-[#141414] text-sm text-neutral-100 placeholder:text-neutral-500 transition outline-none focus:border-red-700 focus:ring-4 focus:ring-red-900/30 disabled:cursor-not-allowed disabled:opacity-60';
-
-const secondaryButtonClass =
-  'inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl border border-neutral-800 px-3 text-sm font-medium whitespace-nowrap text-neutral-300 transition hover:border-neutral-700 hover:bg-neutral-800/60 hover:text-white';
 
 function SelectChevron() {
   return (
@@ -517,40 +501,6 @@ function FiltersBar({ filters, onChange, onClear, onRefresh, isLoading, searches
   );
 }
 
-function GroupBadge({ group }) {
-  if (group === 'SEM_SITE') {
-    return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-linear-to-r from-red-700 to-red-600 px-2.5 py-1 text-[11px] font-bold tracking-wide text-white shadow-md shadow-red-900/50 ring-1 ring-red-500/40">
-        <span className="size-1.5 animate-pulse rounded-full bg-white" />
-        SEM SITE
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold tracking-wide text-emerald-400 ring-1 ring-emerald-500/30">
-      <Globe className="size-3" />
-      COM SITE
-    </span>
-  );
-}
-
-function Rating({ rating, reviewsCount }) {
-  if (!rating) {
-    return <p className="text-sm text-neutral-500">Sem avaliações</p>;
-  }
-
-  return (
-    <div className="flex items-center gap-1.5 text-sm">
-      <Star className="size-4 fill-amber-400 text-amber-400" />
-      <span className="font-semibold text-white">{ratingFormat.format(rating)}</span>
-      {reviewsCount != null && (
-        <span className="text-neutral-500">({numberFormat.format(reviewsCount)} avaliações)</span>
-      )}
-    </div>
-  );
-}
-
 // Visual de cada etapa do funil. NOVO não tem badge: é o estado "limpo" do card.
 const STATUS_META = {
   CONTATADO: { label: 'Abordado', icon: CheckCheck, className: 'bg-neutral-800 text-neutral-300 ring-neutral-700', iconClassName: 'text-emerald-400' },
@@ -603,23 +553,16 @@ function ContactToggle({ lead, onToggle }) {
 }
 
 function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify, qualifying }) {
-  const whatsappLink = gerarLinkWhatsApp(lead);
   const hasSite = lead.lead_group === 'COM_SITE' && lead.website;
   const alreadyApproached = lead.status_prospeccao && lead.status_prospeccao !== 'NOVO';
   const hidden = Boolean(lead.is_hidden);
   // Qualificar = mandar para a coluna "Triagem/Novo" do pipeline (só antes da negociação).
   const canQualify = !hidden && TOGGLEABLE_CONTACT.has(lead.status_prospeccao);
 
-  // Clique (inclusive botão do meio / Ctrl+clique) abre o WhatsApp e registra a abordagem.
-  const handleContact = (event) => {
-    if (event.type === 'auxclick' && event.button !== 1) return;
-    onContact(lead);
-  };
-
   return (
     <article
       aria-label={lead.name}
-      className={`group flex flex-col rounded-2xl border bg-[#1a1a1a] p-5 transition duration-200 hover:-translate-y-0.5 hover:border-red-900/70 hover:shadow-xl hover:shadow-red-950/30 ${
+      className={`${cardClass} ${
         hidden ? 'border-dashed border-neutral-700 opacity-75 hover:opacity-100' : alreadyApproached ? 'border-neutral-800/60 opacity-80 hover:opacity-100' : 'border-neutral-800'
       }`}
     >
@@ -655,31 +598,7 @@ function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify,
       </div>
 
       <div className="mt-auto space-y-2 border-t border-neutral-800 pt-4">
-        {whatsappLink ? (
-          <a
-            href={whatsappLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={handleContact}
-            onAuxClick={handleContact}
-            className={
-              alreadyApproached
-                ? 'flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-emerald-900/60 bg-emerald-950/20 px-4 text-sm font-semibold whitespace-nowrap text-emerald-400 transition hover:bg-emerald-950/50 active:scale-[0.98]'
-                : 'flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold whitespace-nowrap text-white shadow-md shadow-emerald-950/50 transition hover:bg-emerald-500 active:scale-[0.98]'
-            }
-          >
-            <MessageCircle className="size-4" />
-            {alreadyApproached ? 'Chamar novamente' : 'Chamar no WhatsApp'}
-          </a>
-        ) : (
-          <span
-            title={lead.phone ? `Número não compatível com WhatsApp: ${lead.phone}` : 'Telefone não informado'}
-            className="flex h-10 w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-neutral-800/70 px-4 text-sm font-medium text-neutral-500"
-          >
-            <PhoneOff className="size-4" />
-            Sem WhatsApp
-          </span>
-        )}
+        <WhatsAppButton lead={lead} approached={alreadyApproached} onContact={onContact} />
 
         {canQualify && (
           <button

@@ -177,6 +177,18 @@ export async function assignLead(leadId, userId) {
 }
 
 /**
+ * Atribuição em massa: só mexe em leads ainda na fila (pendente/em espera); os já
+ * qualificados/descartados são ignorados. @returns {Promise<{ assigned: number }>}
+ */
+export async function assignLeads(leadIds, userId) {
+  const assigned = await db('lead_triage')
+    .whereIn('lead_id', leadIds)
+    .whereIn('status', ACTIVE_STATUSES)
+    .update({ assigned_to: userId, assigned_at: userId ? db.fn.now() : null });
+  return { assigned };
+}
+
+/**
  * Regista a decisão de triagem. "qualified" cria o negócio no pipeline na mesma transação
  * (se a triagem falhar, o negócio não fica órfão). Qualificado é definitivo: daí em diante
  * o lead é trabalhado no pipeline.

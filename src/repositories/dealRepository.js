@@ -115,6 +115,34 @@ export async function moveDeal(id, { stage, position, lostReason }) {
   return { deal: await findDealById(id), from, to, clientCreatedId: extra.clientCreatedId };
 }
 
-export function deleteDeal(id) {
-  return board.remove(id);
+/**
+ * Remove o negócio do pipeline. Se ele nasceu de uma qualificação na Triagem, o lead volta
+ * para a fila ("pendente") na mesma transação, para poder ser qualificado de novo, em vez de
+ * ficar preso como "qualificado" sem negócio.
+ * @returns {Promise<object>} negócio removido, com `requeued_lead_id` (ou null)
+ */
+export async function deleteDeal(id) {
+  let requeuedLeadId = null;
+  const removed = await board.remove(id, async (trx, row) => {
+    if (!row.lead_id) return;
+    // A FK fk_triage_deal (ON DELETE SET NULL) já zerou deal_id; aceita os dois estados.
+    const requeued = await trx('lead_triage')
+      .where({ lead_id: row.lead_id, status: 'qualified' })
+      .where((w) => w.whereNull('deal_id').orWhere('deal_id', id))
+      .update({
+        status: 'pending',
+        deal_id: null,
+        hold_until: null,
+        triaged_by: null,
+        triaged_at: null,
+        // Sem responsável na fila, volta para quem trabalhava o negócio. O MySQL avalia o SET
+        // da esquerda para a direita, então assigned_at já vê o assigned_to novo.
+        assigned_to: db.raw('COALESCE(assigned_to, ?)', [row.owner_id]),
+        assigned_at: db.raw('IF(assigned_to IS NULL, NULL, COALESCE(assigned_at, NOW()))'),
+      });
+    if (!requeued) return;
+    requeuedLeadId = row.lead_id;
+    await trx('leads').where({ id: row.lead_id, status_prospeccao: 'EM_NEGOCIACAO' }).update({ status_prospeccao: 'NOVO' });
+  });
+  return { ...removed, requeued_lead_id: requeuedLeadId };
 }

@@ -209,7 +209,8 @@ function KanbanColumn({ column, tasks, onOpen, onAdd }) {
 // ---------------------------------------------------------------------------
 
 function TaskEditor({ task, onClose, onSave, onMove, onDelete, canDelete }) {
-  const { data: users = [] } = useUserDirectory();
+  const { isAdmin } = useAuth();
+  const { data: users = [] } = useUserDirectory({ enabled: isAdmin });
   const [form, setForm] = useState({
     title: task.title,
     description: task.description ?? '',
@@ -230,7 +231,8 @@ function TaskEditor({ task, onClose, onSave, onMove, onDelete, canDelete }) {
       await onSave({
         title: form.title.trim(),
         description: form.description.trim() || null,
-        responsible_id: form.responsible_id ? Number(form.responsible_id) : null,
+        // Só o admin reatribui; para os demais o responsável não é enviado (o backend recusaria).
+        ...(isAdmin && { responsible_id: form.responsible_id ? Number(form.responsible_id) : null }),
       });
       onClose();
     } catch (err) {
@@ -283,18 +285,21 @@ function TaskEditor({ task, onClose, onSave, onMove, onDelete, canDelete }) {
             {({ id }) => <Textarea id={id} value={form.description} onChange={set('description')} rows={4} placeholder="Detalhes, links, critérios de aceitação..." />}
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Responsável" error={errors.responsible_id}>
-              {({ id }) => (
-                <Select id={id} value={form.responsible_id} onChange={set('responsible_id')}>
-                  <option value="">Sem responsável</option>
-                  {users.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
+            {/* Seleção de utilizadores: só o admin. */}
+            {isAdmin && (
+              <Field label="Responsável" error={errors.responsible_id}>
+                {({ id }) => (
+                  <Select id={id} value={form.responsible_id} onChange={set('responsible_id')}>
+                    <option value="">Sem responsável</option>
+                    {users.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+            )}
             {/* Alternativa ao arrasto (teclado, telemóvel): move para o fim da coluna escolhida. */}
             <Field label="Mover para" hint="Também pode arrastar o cartão.">
               {({ id }) => (
@@ -329,15 +334,17 @@ function TaskEditor({ task, onClose, onSave, onMove, onDelete, canDelete }) {
 // ---------------------------------------------------------------------------
 
 export default function KanbanPage() {
-  const { user, isManager } = useAuth();
+  const { user, isAdmin } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const [mine, setMine] = useState(false);
-  const boardKey = useMemo(() => ['kanban', { mine }], [mine]);
+  const [mine, setMine] = useState(false); // filtro "Só as minhas": só existe para o admin
+  const onlyMine = isAdmin && mine;
+  const boardKey = useMemo(() => ['kanban', { mine: onlyMine }], [onlyMine]);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: boardKey,
-    queryFn: () => getKanbanBoard({ mine }),
+    // Não-admin não envia filtro: o backend devolve só as tarefas dele de qualquer forma.
+    queryFn: () => getKanbanBoard({ mine: onlyMine }),
   });
 
   const [editingId, setEditingId] = useState(null);
@@ -381,7 +388,8 @@ export default function KanbanPage() {
     columnIds: COLUMN_IDS,
     serverBoard: data,
     columnField: 'column_name',
-    filtered: mine,
+    // Não-admin vê só as próprias tarefas: quadro sempre parcial (posições ≠ índices).
+    filtered: !isAdmin || onlyMine,
     onDrop: ({ id, column, position, next, snapshot }) => {
       queryClient.setQueryData(boardKey, next); // otimista
       moveMutation.mutate({ id, column_name: column, position, snapshot });
@@ -399,15 +407,17 @@ export default function KanbanPage() {
         title="Quadro Kanban"
         description="Arraste os cartões entre colunas para atualizar o estado do trabalho."
         actions={
-          <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-800 px-3 py-2 text-sm text-neutral-300 select-none hover:border-neutral-700">
-            <input
-              type="checkbox"
-              checked={mine}
-              onChange={(e) => setMine(e.target.checked)}
-              className="size-4 accent-red-700"
-            />
-            Só as minhas
-          </label>
+          isAdmin && (
+            <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-neutral-800 px-3 py-2 text-sm text-neutral-300 select-none hover:border-neutral-700">
+              <input
+                type="checkbox"
+                checked={mine}
+                onChange={(e) => setMine(e.target.checked)}
+                className="size-4 accent-red-700"
+              />
+              Só as minhas
+            </label>
+          )
         }
       />
 
@@ -448,7 +458,7 @@ export default function KanbanPage() {
                 column={column}
                 tasks={board[column.id]}
                 onOpen={(task) => setEditingId(task.id)}
-                onAdd={(body) => createMutation.mutateAsync({ ...body, responsible_id: mine ? user?.id : undefined })}
+                onAdd={(body) => createMutation.mutateAsync({ ...body, responsible_id: onlyMine ? user?.id : undefined })}
               />
             ))}
           </div>
@@ -462,7 +472,7 @@ export default function KanbanPage() {
         <TaskEditor
           key={editingTask.id}
           task={editingTask}
-          canDelete={isManager || editingTask.created_by === user?.id || editingTask.responsible_id === user?.id}
+          canDelete={isAdmin || editingTask.responsible_id === user?.id}
           onClose={() => setEditingId(null)}
           onSave={(body) => updateMutation.mutateAsync({ id: editingTask.id, ...body })}
           onMove={(column_name) =>

@@ -21,10 +21,17 @@ export function findTaskById(id) {
   return withNames(db('kanban_tasks as k')).where('k.id', id).first();
 }
 
-/** Quadro completo agrupado por coluna, já ordenado por posição. */
-export async function getBoard({ responsibleId } = {}) {
+/**
+ * Quadro agrupado por coluna, já ordenado por posição.
+ * Hard lock: fora do admin é SEMPRE `WHERE responsible_id = viewer.id`, ignorando o filtro
+ * recebido. Sem `viewer` falha (fail-closed).
+ */
+export async function getBoard({ viewer, responsibleId } = {}) {
+  if (!viewer?.id) throw new Error('getBoard: viewer obrigatório (isolamento por utilizador).');
+  const scopedResponsibleId = viewer.role === 'admin' ? responsibleId : viewer.id;
+
   const query = withNames(db('kanban_tasks as k')).orderBy('k.column_name').orderBy('k.position').orderBy('k.id');
-  if (responsibleId) query.where('k.responsible_id', responsibleId);
+  if (scopedResponsibleId) query.where('k.responsible_id', scopedResponsibleId);
   const tasks = await query;
 
   const grouped = Object.fromEntries(KANBAN_COLUMNS.map((column) => [column, []]));

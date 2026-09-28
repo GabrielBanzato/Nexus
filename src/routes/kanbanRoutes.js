@@ -93,7 +93,7 @@ export default async function kanbanRoutes(app) {
       const user = request.currentUser;
       // Não-admin: WHERE responsible_id = <próprio id>, ignorando o filtro vindo da query.
       const responsibleId = !isAdmin(user) || request.query.mine ? user.id : request.query.responsible_id;
-      return { data: await getBoard({ responsibleId }), meta: { columns: KANBAN_COLUMNS } };
+      return { data: await getBoard({ viewer: user, responsibleId }), meta: { columns: KANBAN_COLUMNS } };
     },
   );
 

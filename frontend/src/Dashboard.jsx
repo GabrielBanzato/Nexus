@@ -33,6 +33,7 @@ import {
   fetchLeads,
   fetchScrapeJob,
   qualifyLead,
+  requalifyTriageLead,
   setLeadHidden,
   startScrape,
   updateLeadStatus,
@@ -77,6 +78,20 @@ const DEFAULT_FILTERS = { nicho: '', grupo: '', contato: 'todos', visibilidade: 
 // Status que o toggle "contatado" pode alternar. Os demais (negociação, cliente, descartado)
 // são geridos pela Triagem/Pipeline e não devem ser desfeitos a partir daqui.
 const TOGGLEABLE_CONTACT = new Set(['NOVO', 'CONTATADO']);
+
+// Negócio vivo (aberto ou ganho): o lead já está no pipeline, não há o que requalificar.
+const LIVE_DEAL_STAGES = new Set(['lead', 'negotiation', 'awaiting', 'won']);
+
+/**
+ * Mesma regra da Triagem (e do backend, que responde 409 fora dela): requalifica-se um lead já
+ * triado — qualificado com negócio apagado/perdido, descartado ou arquivado na Triagem — que
+ * não tenha negócio vivo. Leads ainda na fila usam "Qualificar para o CRM".
+ */
+function canRequalifyLead(lead) {
+  if (!lead.triage_status) return false;
+  const inQueue = !lead.triage_archived_at && (lead.triage_status === 'pending' || lead.triage_status === 'on_hold');
+  return !inQueue && !LIVE_DEAL_STAGES.has(lead.deal_stage);
+}
 
 const numberFormat = new Intl.NumberFormat('pt-BR');
 
@@ -552,12 +567,14 @@ function ContactToggle({ lead, onToggle }) {
   );
 }
 
-function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify, qualifying }) {
+function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify, onRequalify, busy }) {
   const hasSite = lead.lead_group === 'COM_SITE' && lead.website;
   const alreadyApproached = lead.status_prospeccao && lead.status_prospeccao !== 'NOVO';
   const hidden = Boolean(lead.is_hidden);
   // Qualificar = mandar para a coluna "Triagem/Novo" do pipeline (só antes da negociação).
-  const canQualify = !hidden && TOGGLEABLE_CONTACT.has(lead.status_prospeccao);
+  // Arquivado na Triagem não pode ser decidido: nesse caso o caminho é Requalificar.
+  const canQualify = !hidden && TOGGLEABLE_CONTACT.has(lead.status_prospeccao) && !lead.triage_archived_at;
+  const canRequalify = !hidden && canRequalifyLead(lead);
 
   return (
     <article
@@ -604,12 +621,12 @@ function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify,
           <button
             type="button"
             onClick={() => onQualify(lead)}
-            disabled={qualifying}
+            disabled={busy}
             title="Qualificar: cria o negócio na coluna Triagem/Novo do pipeline, com você como responsável"
             className="flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-red-900/60 bg-red-950/20 text-sm font-semibold text-red-200 transition hover:bg-red-950/50 hover:text-white disabled:cursor-wait disabled:opacity-60"
           >
-            {qualifying ? <LoaderCircle className="size-4 animate-spin" /> : <Handshake className="size-4" />}
-            {qualifying ? 'A qualificar...' : 'Qualificar para o CRM'}
+            {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Handshake className="size-4" />}
+            {busy ? 'A qualificar...' : 'Qualificar para o CRM'}
           </button>
         )}
 
@@ -637,6 +654,18 @@ function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify,
               <MapPinned className="size-4 shrink-0" />
               {!hasSite && 'Ver no Maps'}
             </a>
+          )}
+          {canRequalify && (
+            <button
+              type="button"
+              onClick={() => onRequalify(lead)}
+              disabled={busy}
+              title="Requalificar: volta a Qualificado e entra no topo de Triagem/Novo do pipeline"
+              aria-label={busy ? `A requalificar ${lead.name}` : `Requalificar ${lead.name}`}
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-emerald-900/60 bg-emerald-950/20 text-emerald-400 transition hover:bg-emerald-950/50 hover:text-emerald-200 disabled:cursor-wait disabled:opacity-60"
+            >
+              <RefreshCw className={`size-4 ${busy ? 'animate-spin' : ''}`} />
+            </button>
           )}
           {!hidden && (
             <button
@@ -964,28 +993,11 @@ export default function Dashboard() {
    * Qualificar: o backend cria o negócio em "Triagem/Novo" (responsável = quem clicou), marca o
    * lead como EM_NEGOCIACAO e fecha a triagem. Não é otimista: só muda o card após confirmar.
    */
-  const qualify = async (lead) => {
+  /** Marca o card como ocupado (spinner, botões travados) enquanto `task` corre. */
+  const whileBusy = async (lead, task) => {
     setQualifyingIds((ids) => new Set(ids).add(lead.id));
     try {
-      const { deal } = await qualifyLead(lead.id, { ownerId: isManager ? user?.id : undefined });
-      applyLeadChange(lead, { status_prospeccao: 'EM_NEGOCIACAO' });
-      queryClient.invalidateQueries({ queryKey: ['deals'] });
-      queryClient.invalidateQueries({ queryKey: ['triage'] });
-      queryClient.invalidateQueries({ queryKey: ['metrics'] });
-      setToast({
-        type: 'success',
-        title: 'Lead qualificado',
-        message: `"${lead.name}" entrou na coluna Triagem/Novo do pipeline${deal?.owner_name ? `, com ${deal.owner_name} como responsável` : ''}.`,
-        action: { label: 'Abrir pipeline', onClick: () => { setToast(null); navigate('pipeline'); } },
-      });
-    } catch (err) {
-      if (err.status === 401) return;
-      refreshLeads();
-      setToast({
-        type: 'error',
-        title: err.status === 409 ? 'Lead já qualificado' : 'Não foi possível qualificar',
-        message: err.message,
-      });
+      await task();
     } finally {
       setQualifyingIds((ids) => {
         const next = new Set(ids);
@@ -994,6 +1006,72 @@ export default function Dashboard() {
       });
     }
   };
+
+  /** Depois de mandar um lead para o pipeline: atualiza o card e as outras vistas do CRM. */
+  const afterSentToPipeline = (lead, deal) => {
+    applyLeadChange(lead, {
+      status_prospeccao: 'EM_NEGOCIACAO',
+      triage_status: 'qualified',
+      triage_archived_at: null,
+      deal_id: deal.id,
+      deal_stage: deal.stage,
+    });
+    queryClient.invalidateQueries({ queryKey: ['deals'] });
+    queryClient.invalidateQueries({ queryKey: ['triage'] });
+    queryClient.invalidateQueries({ queryKey: ['metrics'] });
+  };
+
+  const openPipelineAction = { label: 'Abrir pipeline', onClick: () => { setToast(null); navigate('pipeline'); } };
+
+  const qualify = (lead) =>
+    whileBusy(lead, async () => {
+      try {
+        const { deal } = await qualifyLead(lead.id, { ownerId: isManager ? user?.id : undefined });
+        afterSentToPipeline(lead, deal);
+        setToast({
+          type: 'success',
+          title: 'Lead qualificado',
+          message: `"${lead.name}" entrou na coluna Triagem/Novo do pipeline${deal?.owner_name ? `, com ${deal.owner_name} como responsável` : ''}.`,
+          action: openPipelineAction,
+        });
+      } catch (err) {
+        if (err.status === 401) return;
+        refreshLeads();
+        setToast({
+          type: 'error',
+          title: err.status === 409 ? 'Lead já qualificado' : 'Não foi possível qualificar',
+          message: err.message,
+        });
+      }
+    });
+
+  /**
+   * Requalificar (PATCH /api/triage/:id/requalify): lead já triado e sem negócio vivo volta a
+   * "Qualificado" e entra no topo de "Triagem/Novo" (negócio novo, ou o perdido reaberto).
+   */
+  const requalify = (lead) =>
+    whileBusy(lead, async () => {
+      try {
+        const { deal, reopened } = await requalifyTriageLead(lead.id);
+        afterSentToPipeline(lead, deal);
+        setToast({
+          type: 'success',
+          title: 'Lead requalificado',
+          message: reopened
+            ? `O negócio de "${lead.name}" foi reaberto no topo de Triagem/Novo.`
+            : `"${lead.name}" voltou ao pipeline, no topo de Triagem/Novo.`,
+          action: openPipelineAction,
+        });
+      } catch (err) {
+        if (err.status === 401) return;
+        refreshLeads(); // ex.: 409 porque alguém já o pôs no pipeline — mostra o estado real
+        setToast({
+          type: 'error',
+          title: err.status === 409 ? 'Não é possível requalificar' : 'Não foi possível requalificar',
+          message: err.message,
+        });
+      }
+    });
 
   /** Exporta TODOS os leads dos filtros ativos (não só a página carregada na tela). */
   const handleExport = useCallback(async () => {
@@ -1115,7 +1193,8 @@ export default function Dashboard() {
                 onToggleContact={toggleContact}
                 onToggleHidden={toggleHidden}
                 onQualify={qualify}
-                qualifying={qualifyingIds.has(lead.id)}
+                onRequalify={requalify}
+                busy={qualifyingIds.has(lead.id)}
               />
             ))}
           </div>

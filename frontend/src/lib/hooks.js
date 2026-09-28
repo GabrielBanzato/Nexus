@@ -11,9 +11,12 @@ export function useDebouncedValue(value, delay = 350) {
   return debounced;
 }
 
-/** Utilizadores ativos (id, name, role) para selects de responsável/atribuição. */
-export function useUserDirectory() {
-  return useQuery({ queryKey: ['users', 'directory'], queryFn: getUserDirectory, staleTime: 5 * 60_000 });
+/**
+ * Utilizadores ativos (id, name, role) para selects de responsável/atribuição.
+ * `enabled: false` evita o pedido em ecrãs onde o utilizador não pode escolher pessoas.
+ */
+export function useUserDirectory({ enabled = true } = {}) {
+  return useQuery({ queryKey: ['users', 'directory'], queryFn: getUserDirectory, staleTime: 5 * 60_000, enabled });
 }
 
 /** Clientes para o select de chamados (até 200, ordenados por atualização). */

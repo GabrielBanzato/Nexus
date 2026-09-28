@@ -215,8 +215,8 @@ function StageColumn({ stage, deals, totals, onOpen, onNote, canDrag, onAdd }) {
 // ---------------------------------------------------------------------------
 
 function DealForm({ deal, stage, onSaved, formId }) {
-  const { isManager } = useAuth();
-  const { data: users = [] } = useUserDirectory();
+  const { isAdmin } = useAuth();
+  const { data: users = [] } = useUserDirectory({ enabled: isAdmin });
   const toast = useToast();
   const isEdit = Boolean(deal?.id);
   const [form, setForm] = useState({
@@ -261,7 +261,7 @@ function DealForm({ deal, stage, onSaved, formId }) {
       email: orNull(form.email),
       expected_close_date: form.expected_close_date || null,
     };
-    if (isManager && form.owner_id !== '') body.owner_id = Number(form.owner_id);
+    if (isAdmin && form.owner_id !== '') body.owner_id = Number(form.owner_id);
     mutation.mutate(body);
   };
 
@@ -282,16 +282,21 @@ function DealForm({ deal, stage, onSaved, formId }) {
         <Field label="Contacto">{({ id }) => <input id={id} value={form.contact_name} onChange={set('contact_name')} className={inputClass} />}</Field>
         <Field label="Telefone">{({ id }) => <input id={id} type="tel" value={form.phone} onChange={set('phone')} className={inputClass} />}</Field>
         <Field label="Email" error={errors.email}>{({ id }) => <input id={id} type="email" value={form.email} onChange={set('email')} className={inputClass} />}</Field>
-        <Field label="Responsável" hint={isManager ? undefined : 'Negócios criados por agentes ficam sob a sua responsabilidade.'} className="sm:col-span-2">
-          {({ id }) => (
-            <Select id={id} value={form.owner_id} onChange={set('owner_id')} disabled={!isManager}>
-              <option value="">{isEdit ? 'Sem responsável' : 'Eu'}</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>{u.name}</option>
-              ))}
-            </Select>
-          )}
-        </Field>
+        {/* Seleção de utilizadores: só o admin. Os demais nem veem a lista da equipe. */}
+        {isAdmin ? (
+          <Field label="Responsável" className="sm:col-span-2">
+            {({ id }) => (
+              <Select id={id} value={form.owner_id} onChange={set('owner_id')}>
+                <option value="">{isEdit ? 'Sem responsável' : 'Eu'}</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        ) : (
+          !isEdit && <p className="text-xs text-neutral-500 sm:col-span-2">O negócio fica sob a sua responsabilidade.</p>
+        )}
       </div>
     </form>
   );
@@ -462,11 +467,11 @@ function QuickNoteModal({ deal, onClose }) {
 // ---------------------------------------------------------------------------
 
 export default function PipelinePage() {
-  const { user, isManager } = useAuth();
+  const { user, isAdmin, isManager } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { data: users = [] } = useUserDirectory();
-  const [owner, setOwner] = useState(''); // '' todos · 'mine' · id
+  const { data: users = [] } = useUserDirectory({ enabled: isAdmin });
+  const [owner, setOwner] = useState(''); // só admin: '' todos · 'mine' · id
   const [search, setSearch] = useState('');
   const q = useDebouncedValue(search.trim());
   const [openId, setOpenId] = useState(null);
@@ -475,8 +480,9 @@ export default function PipelinePage() {
   const [lossReason, setLossReason] = useState('');
   const [noteFor, setNoteFor] = useState(null);
 
-  const params = { mine: owner === 'mine', owner_id: owner && owner !== 'mine' ? owner : undefined, q };
-  const boardKey = useMemo(() => ['deals', 'board', params], [owner, q]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Não-admin não envia filtro de pessoa (o backend força o próprio id de qualquer forma).
+  const params = isAdmin ? { mine: owner === 'mine', owner_id: owner && owner !== 'mine' ? owner : undefined, q } : { q };
+  const boardKey = useMemo(() => ['deals', 'board', params], [isAdmin, owner, q]); // eslint-disable-line react-hooks/exhaustive-deps
   const { data, isLoading, isError, error, refetch } = useQuery({ queryKey: boardKey, queryFn: () => getDealBoard(params) });
 
   const moveMutation = useMutation({
@@ -495,13 +501,15 @@ export default function PipelinePage() {
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['deals'] }),
   });
 
-  const canDrag = (deal) => isManager || deal.owner_id === user?.id;
+  const canDrag = (deal) => isAdmin || deal.owner_id === user?.id;
 
   const { board, sensors, collisionDetection, activeItem, handlers } = useBoardDnd({
     columnIds: STAGE_IDS,
     serverBoard: data?.data,
     columnField: 'stage',
-    filtered: Boolean(owner || q),
+    // Não-admin recebe só os próprios negócios: o quadro é SEMPRE parcial, logo as posições
+    // na tela não são as do servidor e o hook tem de calcular pelas posições dos vizinhos.
+    filtered: !isAdmin || Boolean(owner || q),
     onDrop: (move) => {
       queryClient.setQueryData(boardKey, (old) => (old ? { ...old, data: move.next } : old));
       const vars = { id: move.id, stage: move.column, position: move.position, snapshot: move.snapshot, from: move.from };
@@ -545,13 +553,16 @@ export default function PipelinePage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Select aria-label="Filtrar por responsável" value={owner} onChange={(e) => setOwner(e.target.value)} className="w-52">
-          <option value="">Toda a equipe</option>
-          <option value="mine">Os meus negócios</option>
-          {users.map((u) => (
-            <option key={u.id} value={u.id}>{u.name}</option>
-          ))}
-        </Select>
+        {/* "Toda a equipe" e a troca de responsável são exclusivos do admin. */}
+        {isAdmin && (
+          <Select aria-label="Filtrar por responsável" value={owner} onChange={(e) => setOwner(e.target.value)} className="w-52">
+            <option value="">Toda a equipe</option>
+            <option value="mine">Os meus negócios</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>{u.name}</option>
+            ))}
+          </Select>
+        )}
         <label className="relative min-w-0 flex-1 sm:w-72 sm:flex-none">
           <span className="sr-only">Pesquisar negócios</span>
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-neutral-500" />
@@ -627,7 +638,8 @@ export default function PipelinePage() {
           key={openDeal.id}
           deal={openDeal}
           canEdit={canDrag(openDeal)}
-          canDelete={isManager}
+          // Backend: admin apaga qualquer um; partner só os próprios; agent nenhum.
+          canDelete={isAdmin || (isManager && openDeal.owner_id === user?.id)}
           onClose={() => setOpenId(null)}
           onDeleted={() => {
             setOpenId(null);

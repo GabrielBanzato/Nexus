@@ -84,7 +84,8 @@ export default async function dealRoutes(app) {
     const user = request.currentUser;
     // Não-admin: WHERE owner_id = <próprio id>, ignorando qualquer owner_id vindo da query.
     const ownerId = !isAdmin(user) || request.query.mine ? user.id : request.query.owner_id;
-    const { board, totals } = await getDealBoard({ ownerId, q: request.query.q });
+    // O repositório reaplica o escopo a partir de `viewer` (segunda trava, fail-closed).
+    const { board, totals } = await getDealBoard({ viewer: user, ownerId, q: request.query.q });
     return { data: board, meta: { stages: DEAL_STAGES, totals } };
   });
 

@@ -35,10 +35,19 @@ export function findDealById(id) {
   return withNames(db('deals as d')).where('d.id', id).first();
 }
 
-/** Pipeline agrupado por estágio + totais (quantidade, valor, valor ponderado) de cada estágio. */
-export async function getDealBoard({ ownerId, q } = {}) {
+/**
+ * Pipeline agrupado por estágio + totais (quantidade, valor, valor ponderado) de cada estágio.
+ *
+ * Hard lock de privacidade: o escopo vem de `viewer` (utilizador autenticado), não só do filtro
+ * do pedido. Fora do admin é SEMPRE `WHERE owner_id = viewer.id`, qualquer que seja o `ownerId`
+ * recebido. Sem `viewer` falha (fail-closed) em vez de devolver o quadro da equipe toda.
+ */
+export async function getDealBoard({ viewer, ownerId, q } = {}) {
+  if (!viewer?.id) throw new Error('getDealBoard: viewer obrigatório (isolamento por utilizador).');
+  const scopedOwnerId = viewer.role === 'admin' ? ownerId : viewer.id;
+
   const query = withNames(db('deals as d')).orderBy('d.stage').orderBy('d.position').orderBy('d.id');
-  if (ownerId) query.where('d.owner_id', ownerId);
+  if (scopedOwnerId) query.where('d.owner_id', scopedOwnerId);
   if (q) {
     const term = `%${escapeLike(q)}%`;
     query.where((w) => w.where('d.title', 'like', term).orWhere('d.company', 'like', term).orWhere('d.contact_name', 'like', term));

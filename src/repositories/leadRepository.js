@@ -38,6 +38,19 @@ const API_COLUMNS = {
   updated_at: 'atualizado_em',
 };
 
+const prefixColumns = (alias) => Object.fromEntries(Object.entries(API_COLUMNS).map(([key, column]) => [key, `${alias}.${column}`]));
+
+/**
+ * Estado do lead no CRM (lead_triage + negócio): deal_stage é null sem negócio vivo
+ * (nunca qualificado, ou negócio apagado do pipeline).
+ */
+const CRM_COLUMNS = {
+  triage_status: 't.status',
+  triage_archived_at: 't.archived_at',
+  deal_id: 'd.id',
+  deal_stage: 'd.stage',
+};
+
 /**
  * Insere ou atualiza (upsert) um lead já classificado.
  * Numa nova varredura, atualiza os dados do Maps mas preserva o status_prospeccao
@@ -132,21 +145,24 @@ export async function listSearchTerms() {
  * A collation utf8mb4_0900_ai_ci torna o filtro de nicho insensível a acento e caixa.
  */
 export async function findLeads({ grupo, nicho, contato, visibilidade = 'ativos', busca, limit = 50, offset = 0 } = {}) {
-  const query = db('leads');
+  const query = db('leads as l');
 
-  query.where('is_hidden', visibilidade === 'ocultos');
-  if (contato === 'contatados') query.whereNot('status_prospeccao', 'NOVO');
-  if (contato === 'nao_contatados') query.where('status_prospeccao', 'NOVO');
-  if (busca) query.where('termo_busca', busca);
-  if (grupo) query.where('grupo', grupo);
+  query.where('l.is_hidden', visibilidade === 'ocultos');
+  if (contato === 'contatados') query.whereNot('l.status_prospeccao', 'NOVO');
+  if (contato === 'nao_contatados') query.where('l.status_prospeccao', 'NOVO');
+  if (busca) query.where('l.termo_busca', busca);
+  if (grupo) query.where('l.grupo', grupo);
   // where(..., 'like') e não whereLike(): no MySQL o whereLike do Knex força COLLATE utf8_bin.
-  if (nicho) query.where('nicho', 'like', `%${escapeLike(nicho)}%`);
+  if (nicho) query.where('l.nicho', 'like', `%${escapeLike(nicho)}%`);
 
   const [{ total }] = await query.clone().count({ total: '*' });
   const data = await query
     .clone()
-    .select(API_COLUMNS)
-    .orderBy([{ column: 'criado_em', order: 'desc' }, { column: 'id', order: 'desc' }])
+    // Estado no CRM, para o card decidir entre "Qualificar", "Requalificar" ou nenhum.
+    .leftJoin('lead_triage as t', 't.lead_id', 'l.id')
+    .leftJoin('deals as d', 'd.id', 't.deal_id')
+    .select({ ...prefixColumns('l'), ...CRM_COLUMNS })
+    .orderBy([{ column: 'l.criado_em', order: 'desc' }, { column: 'l.id', order: 'desc' }])
     .limit(limit)
     .offset(offset);
 

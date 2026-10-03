@@ -21,6 +21,8 @@ const clientProperties = {
   status: { type: 'string', enum: CLIENT_STATUSES },
   responsible_id: nullableId,
   lead_id: nullableId,
+  // false = um humano assumiu a conversa no WhatsApp e a IA não deve responder.
+  bot_active: { type: 'boolean' },
 };
 
 const listSchema = {

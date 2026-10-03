@@ -1,18 +1,20 @@
 import { publish } from '../lib/events.js';
-import { forbidden, notFound } from '../lib/errors.js';
+import { AppError, forbidden, notFound } from '../lib/errors.js';
 import { isAdmin, requireRole } from '../plugins/auth.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
 import {
   DEAL_FIELDS,
   DEAL_STAGES,
-  OPEN_STAGES,
+  DIRECT_STAGES,
   createDeal,
   deleteDeal,
   findDealById,
   getDealBoard,
   moveDeal,
+  scheduleMeeting,
   updateDeal,
 } from '../repositories/dealRepository.js';
+import { sendMeetingConfirmation } from '../services/meetingNotifier.js';
 import { email, idParam, nullableId } from './schemas.js';
 
 const dealProperties = {
@@ -44,7 +46,7 @@ const createSchema = {
     type: 'object',
     required: ['title'],
     additionalProperties: false,
-    properties: { ...dealProperties, stage: { type: 'string', enum: OPEN_STAGES, default: 'lead' }, lead_id: nullableId },
+    properties: { ...dealProperties, stage: { type: 'string', enum: DIRECT_STAGES, default: 'lead' }, lead_id: nullableId },
   },
 };
 
@@ -66,6 +68,22 @@ const moveSchema = {
     },
   },
 };
+
+const scheduleSchema = {
+  body: {
+    type: 'object',
+    required: ['deal_id', 'meeting_at'],
+    additionalProperties: false,
+    properties: {
+      deal_id: { type: 'integer', minimum: 1 },
+      meeting_at: { type: 'string', format: 'date-time' }, // ISO com fuso (o browser envia em UTC)
+      position: { type: 'integer', minimum: 0 }, // onde o card foi largado (omitido = fim da coluna)
+      notify: { type: 'boolean', default: true }, // enviar a confirmação por WhatsApp
+    },
+  },
+};
+const MEETING_PAST_TOLERANCE_MS = 5 * 60_000; // relógios ligeiramente desacertados
+const MEETING_MAX_AHEAD_MS = 366 * 24 * 60 * 60_000;
 
 const pick = (source, fields) => Object.fromEntries(fields.filter((f) => source[f] !== undefined).map((f) => [f, source[f]]));
 
@@ -134,6 +152,11 @@ export default async function dealRoutes(app) {
     const before = await findAccessibleDeal(request.currentUser, request.params.id);
 
     const { stage, position, lost_reason: lostReason } = request.body;
+    // Entrar em "Reunião Agendada" exige data/hora e envia confirmação: só pela rota própria.
+    // Reordenar dentro da própria coluna continua a passar por aqui.
+    if (stage === 'meeting' && before.stage !== 'meeting') {
+      throw new AppError(422, 'MEETING_REQUIRES_SCHEDULE', 'Para mover para "Reunião Agendada", indique a data e a hora da reunião.');
+    }
     const { deal, from, to, clientCreatedId } = await moveDeal(before.id, { stage, position, lostReason });
 
     if (from.column !== to.column) {
@@ -156,6 +179,44 @@ export default async function dealRoutes(app) {
     }
     publish('deals', request);
     return { data: deal, meta: { client_created_id: clientCreatedId } };
+  });
+
+  /**
+   * Agendar (ou reagendar) a reunião: move o negócio para "Reunião Agendada" com a data/hora e,
+   * se `notify`, envia ao cliente a confirmação pelo WhatsApp.
+   * A reunião fica agendada mesmo que o envio falhe: `meta.notification` diz se a mensagem saiu
+   * (e porquê não), para a UI avisar o vendedor.
+   */
+  app.post('/api/pipeline/schedule-meeting', { schema: scheduleSchema }, async (request) => {
+    const user = request.currentUser;
+    const { deal_id: dealId, meeting_at: meetingAtRaw, position, notify } = request.body;
+    const before = await findAccessibleDeal(user, dealId);
+
+    const meetingAt = new Date(meetingAtRaw);
+    if (meetingAt.getTime() < Date.now() - MEETING_PAST_TOLERANCE_MS) {
+      throw new AppError(422, 'MEETING_IN_PAST', 'A data da reunião já passou. Escolha uma data futura.');
+    }
+    if (meetingAt.getTime() > Date.now() + MEETING_MAX_AHEAD_MS) {
+      throw new AppError(422, 'MEETING_TOO_FAR', 'A reunião tem de ser dentro dos próximos 12 meses.');
+    }
+
+    const { deal, from } = await scheduleMeeting(before.id, { meetingAt, position });
+    const hadClient = Boolean(deal.client_id);
+    const notification = notify
+      ? await sendMeetingConfirmation({ whatsapp: app.whatsapp, io: app.io, deal, meetingAt, userId: user.id, logger: request.log })
+      : { sent: false, reason: 'SKIPPED' };
+
+    await logActivity(request, {
+      action: 'deal.meeting',
+      entityType: 'deal',
+      entityId: deal.id,
+      details: { from: from.column, meeting_at: meetingAt.toISOString(), notified: notification.sent, reason: notification.reason },
+    });
+    publish('deals', request);
+    // O envio pode ter criado/associado um cliente ao negócio.
+    if (!hadClient && notification.client_id) publish('clients', request);
+
+    return { data: await findDealById(deal.id), meta: { notification } };
   });
 
   // Remover do pipeline devolve o lead de origem à fila da Triagem (ver deleteDeal).

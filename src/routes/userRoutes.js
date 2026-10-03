@@ -1,6 +1,7 @@
 import { publish } from '../lib/events.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { requireRole } from '../plugins/auth.js';
+import { disconnectUser } from '../plugins/socket.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
 import {
   ROLES,
@@ -82,6 +83,8 @@ export default async function userRoutes(app) {
     if (request.body.password) changes.password = 'redefinida';
     await logActivity(request, { action: 'user.update', entityType: 'user', entityId: id, details: changes });
     publish('users', request);
+    // Papel ou acesso mudou: as salas do Socket.io têm de ser recalculadas já.
+    if (changes.role || changes.is_active) disconnectUser(app.io, id);
 
     return { data: user };
   });

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
-import { BarChart3, Building2, Filter, Handshake, LogOut, Radar, SquareKanban, Ticket, Users } from 'lucide-react';
+import { BarChart3, Building2, Filter, Handshake, LogOut, MessagesSquare, Radar, SquareKanban, Ticket, Users } from 'lucide-react';
 import Dashboard from '../Dashboard.jsx';
+import AttendancePage from '../pages/AttendancePage.jsx';
 import ClientsPage from '../pages/ClientsPage.jsx';
 import KanbanPage from '../pages/KanbanPage.jsx';
 import PerformancePage from '../pages/PerformancePage.jsx';
@@ -28,6 +29,13 @@ const GROUPS = [
       { path: 'pipeline', label: 'Pipeline', icon: Handshake, element: PipelinePage, wide: true },
       // Aberto a todos: o ranking da equipe é visível para fomentar a competição saudável.
       { path: 'desempenho', label: 'Desempenho', icon: BarChart3, element: PerformancePage },
+    ],
+  },
+  {
+    label: 'Atendimento',
+    routes: [
+      // Todos os papéis: o servidor só devolve os clientes de que cada um é responsável.
+      { path: 'atendimento', label: 'Central de Atendimento', icon: MessagesSquare, element: AttendancePage, wide: true },
     ],
   },
   {

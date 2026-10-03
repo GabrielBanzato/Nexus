@@ -131,10 +131,13 @@ const SCHEMA = [
         status          ENUM('lead', 'active', 'archived') NOT NULL DEFAULT 'lead',
         responsible_id  INT UNSIGNED  NULL,
         lead_id         INT UNSIGNED  NULL COMMENT 'Lead de prospecção que originou o cliente',
+        bot_active      TINYINT(1)    NOT NULL DEFAULT 1 COMMENT 'IA responde no WhatsApp; 0 = um humano assumiu a conversa',
+        whatsapp_jid    VARCHAR(64)   NULL COMMENT 'Contacto no WhatsApp (ex.: 5511999999999@c.us)',
         created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
         PRIMARY KEY (id),
+        UNIQUE KEY uq_clients_whatsapp (whatsapp_jid),
         KEY idx_clients_status (status),
         KEY idx_clients_responsible (responsible_id),
         KEY idx_clients_lead (lead_id),
@@ -237,7 +240,7 @@ const SCHEMA = [
         phone                VARCHAR(30)    NULL,
         email                VARCHAR(190)   NULL,
         value                DECIMAL(12,2)  NOT NULL DEFAULT 0,
-        stage                ENUM('lead', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead',
+        stage                ENUM('lead', 'meeting', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead',
         position             INT UNSIGNED   NOT NULL DEFAULT 0 COMMENT 'Ordem dentro do estágio (0 = topo)',
         owner_id             INT UNSIGNED   NULL,
         lead_id              INT UNSIGNED   NULL,
@@ -246,6 +249,7 @@ const SCHEMA = [
         lost_reason          VARCHAR(255)   NULL,
         won_at               DATETIME       NULL,
         lost_at              DATETIME       NULL,
+        meeting_at           DATETIME       NULL COMMENT 'Reunião agendada (UTC)',
         stage_changed_at     DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_by           INT UNSIGNED   NULL,
         created_at           DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -304,6 +308,28 @@ const SCHEMA = [
         COLLATE = utf8mb4_0900_ai_ci
     `,
   },
+  {
+    table: 'messages',
+    sql: `
+      CREATE TABLE IF NOT EXISTS messages (
+        id              BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
+        client_id       INT UNSIGNED     NOT NULL,
+        sender_type     ENUM('client', 'agent', 'bot') NOT NULL,
+        content         TEXT             NOT NULL,
+        wa_message_id   VARCHAR(128)     NULL COMMENT 'Id no WhatsApp: evita duplicados quando a sessão reconecta',
+        sender_user_id  INT UNSIGNED     NULL COMMENT 'Quem respondeu (sender_type = agent)',
+        created_at      DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_messages_wa (wa_message_id),
+        KEY idx_messages_client (client_id, id),
+        CONSTRAINT fk_messages_client FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE CASCADE,
+        CONSTRAINT fk_messages_sender FOREIGN KEY (sender_user_id) REFERENCES users (id) ON DELETE SET NULL
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
 ];
 
 /**
@@ -336,6 +362,32 @@ const COLUMN_MIGRATIONS = [
         ADD KEY idx_triage_archived (archived_at)
     `,
   },
+  {
+    table: 'deals',
+    column: 'meeting_at',
+    name: 'deals: meeting_at (Reunião Agendada)',
+    sql: `ALTER TABLE deals ADD COLUMN meeting_at DATETIME NULL COMMENT 'Reunião agendada (UTC)' AFTER lost_at`,
+  },
+  {
+    table: 'clients',
+    column: 'bot_active',
+    name: 'clients: bot_active (IA ativa / humano assumiu no WhatsApp)',
+    sql: `
+      ALTER TABLE clients
+        ADD COLUMN bot_active TINYINT(1) NOT NULL DEFAULT 1
+          COMMENT 'IA responde no WhatsApp; 0 = um humano assumiu a conversa' AFTER lead_id
+    `,
+  },
+  {
+    table: 'clients',
+    column: 'whatsapp_jid',
+    name: 'clients: whatsapp_jid (contacto no WhatsApp)',
+    sql: `
+      ALTER TABLE clients
+        ADD COLUMN whatsapp_jid VARCHAR(64) NULL COMMENT 'Contacto no WhatsApp (ex.: 5511999999999@c.us)' AFTER bot_active,
+        ADD UNIQUE KEY uq_clients_whatsapp (whatsapp_jid)
+    `,
+  },
 ];
 
 /**
@@ -362,6 +414,14 @@ const TYPE_MIGRATIONS = [
       // 4) ENUM final.
       `ALTER TABLE deals MODIFY stage ENUM('lead', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead'`,
     ],
+  },
+  {
+    // Corre depois da anterior (cada entrada relê o tipo): bancos antigos ganham os dois passos.
+    table: 'deals',
+    column: 'stage',
+    name: 'deals: estágio Reunião Agendada',
+    pending: (type) => !type.includes("'meeting'"),
+    steps: [`ALTER TABLE deals MODIFY stage ENUM('lead', 'meeting', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead'`],
   },
 ];
 

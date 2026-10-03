@@ -182,12 +182,29 @@ export const archiveTriageLead = (leadId) => request(`/api/triage/${leadId}/arch
 export const restoreTriageLead = (leadId) => request(`/api/triage/${leadId}/restore`, { method: 'PATCH' }).then(unwrap);
 export const decideTriageLead =(leadId, body) => request(`/api/triage/${leadId}/decision`, json('POST', body)).then(unwrap);
 
+// Central de Atendimento (WhatsApp)
+export const listConversations = (params) => request(`/api/conversations${qs(params)}`);
+/** Página de mensagens (ordem cronológica). `before` = id da mais antiga já carregada. */
+export const getClientMessages = (clientId, { before, signal } = {}) =>
+  request(`/api/clients/${clientId}/messages${qs({ before, limit: 50 })}`, { signal });
+export const sendClientMessage = (clientId, content) =>
+  request(`/api/clients/${clientId}/messages`, json('POST', { content }));
+// Sessão do WhatsApp (só admin)
+export const getWhatsAppQr = () => request('/api/whatsapp/qr').then(unwrap);
+export const getWhatsAppStatus = () => request('/api/whatsapp/status').then(unwrap);
+export const logoutWhatsApp = () => request('/api/whatsapp/logout', { method: 'POST' }).then(unwrap);
+
 // Pipeline
 export const getDealBoard = (params) => request(`/api/deals/board${qs(params)}`);
 export const createDeal = (body) => request('/api/deals', json('POST', body)).then(unwrap);
 export const updateDeal = (id, body) => request(`/api/deals/${id}`, json('PATCH', body)).then(unwrap);
 export const moveDeal = (id, body) => request(`/api/deals/${id}/move`, json('PATCH', body));
 export const deleteDeal = (id) => request(`/api/deals/${id}`, { method: 'DELETE' });
+/** Move para "Reunião Agendada" e (se notify) confirma ao cliente por WhatsApp. Devolve { data, meta.notification }. */
+export const scheduleMeeting = (body) => request('/api/pipeline/schedule-meeting', json('POST', body));
+/** "Assumir atendimento": false = humano assumiu (a IA para), true = devolve à IA. */
+export const setBotStatus = (clientId, botActive) =>
+  request(`/api/clients/${clientId}/bot-status`, json('PATCH', { bot_active: botActive })).then(unwrap);
 
 // Métricas
 export const getPerformance = (params) => request(`/api/metrics/performance${qs(params)}`);

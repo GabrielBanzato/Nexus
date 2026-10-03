@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Dices, Eye, EyeOff, Handshake, Headset, Power, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { Check, Copy, Dices, Eye, EyeOff, Handshake, Headset, Power, QrCode, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { WhatsAppConnectModal, WhatsAppStatusPill, useWhatsAppAdminState } from '../components/WhatsAppConnect.jsx';
 import { createUser, listUsers, updateUser } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { ROLE_META, formatDateTime, formatRelative } from '../lib/labels.js';
@@ -193,6 +194,8 @@ export default function TeamPage() {
   const [tab, setTab] = useState('active');
   const [adding, setAdding] = useState(false);
   const [toggling, setToggling] = useState(null); // membro a (des)ativar
+  const [whatsappOpen, setWhatsappOpen] = useState(false);
+  const whatsapp = useWhatsAppAdminState({ enabled: isAdmin });
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['users', 'list'],
@@ -234,12 +237,20 @@ export default function TeamPage() {
         description="Membros com acesso ao Nexus e os respetivos papéis."
         actions={
           isAdmin && (
-            <Button icon={UserPlus} onClick={() => setAdding(true)}>
-              Adicionar membro
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Ligação do WhatsApp da empresa (QR Code) usado pela Central de Atendimento. */}
+              <Button variant="secondary" icon={QrCode} onClick={() => setWhatsappOpen(true)}>
+                WhatsApp
+                {whatsapp.status && <WhatsAppStatusPill status={whatsapp.status} compact />}
+              </Button>
+              <Button icon={UserPlus} onClick={() => setAdding(true)}>
+                Adicionar membro
+              </Button>
+            </div>
           )
         }
       />
+      <WhatsAppConnectModal open={whatsappOpen} onClose={() => setWhatsappOpen(false)} />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard label="Administradores" value={counts.admin} icon={ShieldCheck} tone="red" loading={isLoading} />

@@ -109,10 +109,13 @@ CREATE TABLE IF NOT EXISTS clients (
   status          ENUM('lead', 'active', 'archived') NOT NULL DEFAULT 'lead',
   responsible_id  INT UNSIGNED  NULL,
   lead_id         INT UNSIGNED  NULL COMMENT 'Lead de prospecção que originou o cliente',
+  bot_active      TINYINT(1)    NOT NULL DEFAULT 1 COMMENT 'IA responde no WhatsApp; 0 = um humano assumiu a conversa',
+  whatsapp_jid    VARCHAR(64)   NULL COMMENT 'Contacto no WhatsApp (ex.: 5511999999999@c.us)',
   created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
   PRIMARY KEY (id),
+  UNIQUE KEY uq_clients_whatsapp (whatsapp_jid),
   KEY idx_clients_status (status),
   KEY idx_clients_responsible (responsible_id),
   KEY idx_clients_lead (lead_id),
@@ -211,7 +214,7 @@ CREATE TABLE IF NOT EXISTS deals (
   phone                VARCHAR(30)    NULL,
   email                VARCHAR(190)   NULL,
   value                DECIMAL(12,2)  NOT NULL DEFAULT 0,
-  stage                ENUM('lead', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead',
+  stage                ENUM('lead', 'meeting', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead',
   position             INT UNSIGNED   NOT NULL DEFAULT 0,
   owner_id             INT UNSIGNED   NULL,
   lead_id              INT UNSIGNED   NULL,
@@ -220,6 +223,7 @@ CREATE TABLE IF NOT EXISTS deals (
   lost_reason          VARCHAR(255)   NULL,
   won_at               DATETIME       NULL,
   lost_at              DATETIME       NULL,
+  meeting_at           DATETIME       NULL COMMENT 'Reunião agendada (UTC)',
   stage_changed_at     DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_by           INT UNSIGNED   NULL,
   created_at           DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -271,6 +275,27 @@ CREATE TABLE IF NOT EXISTS lead_triage (
   CONSTRAINT fk_triage_assigned FOREIGN KEY (assigned_to) REFERENCES users (id) ON DELETE SET NULL,
   CONSTRAINT fk_triage_triaged_by FOREIGN KEY (triaged_by) REFERENCES users (id) ON DELETE SET NULL,
   CONSTRAINT fk_triage_deal FOREIGN KEY (deal_id) REFERENCES deals (id) ON DELETE SET NULL
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------------------------------
+-- Mensagens do WhatsApp (conversa por cliente)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS messages (
+  id              BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  client_id       INT UNSIGNED     NOT NULL,
+  sender_type     ENUM('client', 'agent', 'bot') NOT NULL,
+  content         TEXT             NOT NULL,
+  wa_message_id   VARCHAR(128)     NULL COMMENT 'Id no WhatsApp: evita duplicados quando a sessão reconecta',
+  sender_user_id  INT UNSIGNED     NULL COMMENT 'Quem respondeu (sender_type = agent)',
+  created_at      DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_messages_wa (wa_message_id),
+  KEY idx_messages_client (client_id, id),
+  CONSTRAINT fk_messages_client FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE CASCADE,
+  CONSTRAINT fk_messages_sender FOREIGN KEY (sender_user_id) REFERENCES users (id) ON DELETE SET NULL
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;

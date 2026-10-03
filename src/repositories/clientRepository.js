@@ -1,7 +1,7 @@
 import { db } from '../config/database.js';
 
 export const CLIENT_STATUSES = ['lead', 'active', 'archived'];
-export const CLIENT_FIELDS = ['name', 'company', 'phone', 'email', 'status', 'responsible_id', 'lead_id'];
+export const CLIENT_FIELDS = ['name', 'company', 'phone', 'email', 'status', 'responsible_id', 'lead_id', 'bot_active'];
 
 const escapeLike = (value) => value.replace(/[\\%_]/g, (char) => `\\${char}`);
 
@@ -50,4 +50,144 @@ export async function updateClient(id, fields) {
 
 export function deleteClient(id) {
   return db('clients').where({ id }).delete();
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp: identificar o cliente de uma conversa
+// ---------------------------------------------------------------------------
+
+/**
+ * Formas possíveis do mesmo número, para comparar com telefones gravados à mão ou vindos do
+ * Maps: com e sem DDI 55 e, no Brasil, com e sem o 9 dos celulares (contas antigas do
+ * WhatsApp continuam registadas sem ele).
+ */
+export function phoneMatchKeys(digits) {
+  if (!digits || digits.length < 8) return [];
+  const national = digits.startsWith('55') && digits.length >= 12 ? digits.slice(2) : digits;
+  const variants = new Set([national]);
+  if (national.length === 10) variants.add(`${national.slice(0, 2)}9${national.slice(2)}`);
+  if (national.length === 11 && national[2] === '9') variants.add(national.slice(0, 2) + national.slice(3));
+  return [...variants].flatMap((v) => [v, `55${v}`]);
+}
+
+/**
+ * Número no formato do WhatsApp (DDI + DDD + número) a partir de um telefone livre.
+ * 10–11 dígitos = número brasileiro sem DDI → prefixa 55. Devolve null se não der.
+ */
+export function toWhatsAppNumber(phone) {
+  const digits = (phone ?? '').replace(/\D/g, '');
+  if (!digits || digits.startsWith('0')) return null; // 0800/0300 não têm WhatsApp
+  if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+  return digits.length >= 12 ? digits : null;
+}
+
+// Telefone só com dígitos, no SQL (os telefones são texto livre: "(11) 98765-4321").
+const DIGITS = (column) => db.raw(`REGEXP_REPLACE(${column}, '[^0-9]', '')`);
+
+/**
+ * Lead da prospecção com este número e o responsável que já o trabalha: o dono do negócio
+ * no pipeline ou, se ainda estiver na triagem, quem o tem na fila.
+ */
+function findLeadByPhone(keys) {
+  return db('leads as l')
+    .leftJoin('lead_triage as t', 't.lead_id', 'l.id')
+    .leftJoin('deals as d', 'd.id', 't.deal_id')
+    .whereIn(DIGITS('l.telefone'), keys)
+    .select('l.id', 'l.nome', 'l.telefone', db.raw('COALESCE(d.owner_id, t.assigned_to) AS responsible_id'))
+    .orderBy('l.atualizado_em', 'desc')
+    .first();
+}
+
+/**
+ * Cliente da conversa `jid`:
+ *  1. já ligado ao contacto (whatsapp_jid, indexado);
+ *  2. senão, pelo telefone (liga o jid ao cliente para as próximas mensagens);
+ *  3. senão, se `autoCreate`, cria um cliente "lead" — aproveitando o lead da prospecção com o
+ *     mesmo número (nome, lead_id e responsável), para a conversa ir para quem o trabalha.
+ * @returns {Promise<{ client: object|null, created: boolean }>}
+ */
+export async function findOrCreateWhatsAppClient({ jid, digits, name, autoCreate }) {
+  const byJid = await findClientByJid(jid);
+  if (byJid) return { client: byJid, created: false };
+
+  const keys = phoneMatchKeys(digits);
+  if (keys.length) {
+    const byPhone = await db('clients')
+      .whereIn(DIGITS('phone'), keys)
+      .orderByRaw("FIELD(status, 'active', 'lead', 'archived')")
+      .orderBy('updated_at', 'desc')
+      .first('id');
+    if (byPhone) {
+      // whereNull: nunca rouba um contacto já ligado a outro cliente.
+      await db('clients').where({ id: byPhone.id }).whereNull('whatsapp_jid').update({ whatsapp_jid: jid });
+      return { client: await findClientById(byPhone.id), created: false };
+    }
+  }
+
+  if (!autoCreate) return { client: null, created: false };
+
+  const lead = keys.length ? await findLeadByPhone(keys) : null;
+  try {
+    const client = await createClient({
+      name: (lead?.nome || name || `+${digits || jid.split('@')[0]}`).slice(0, 160),
+      company: lead?.nome?.slice(0, 190) ?? null,
+      phone: (lead?.telefone || (digits ? `+${digits}` : null))?.slice(0, 30) ?? null,
+      status: 'lead',
+      responsible_id: lead?.responsible_id ?? null,
+      lead_id: lead?.id ?? null,
+      whatsapp_jid: jid,
+    });
+    return { client, created: true };
+  } catch (err) {
+    // Duas mensagens do mesmo número novo ao mesmo tempo: a outra já criou o cliente.
+    if (err.code === 'ER_DUP_ENTRY') return { client: await findClientByJid(jid), created: false };
+    throw err;
+  }
+}
+
+/**
+ * Cliente de um negócio, para lhe escrever no WhatsApp:
+ *  1. o já associado (deal.client_id);
+ *  2. senão, um cliente com o mesmo telefone (do negócio ou do lead de origem);
+ *  3. senão, cria um cliente "lead" com os dados do negócio (responsável = dono do negócio).
+ * Em 2 e 3 associa o cliente ao negócio (deal.client_id), para a conversa e o histórico ficarem
+ * ligados — e para "Cliente Fechado" reaproveitar este cliente em vez de criar outro.
+ * @returns {Promise<object|null>} null se não houver telefone nenhum
+ */
+export async function ensureClientForDeal(deal) {
+  if (deal.client_id) {
+    const linked = await findClientById(deal.client_id);
+    if (linked) return linked;
+  }
+
+  let phone = deal.phone;
+  if (!phone && deal.lead_id) phone = (await db('leads').where({ id: deal.lead_id }).first('telefone'))?.telefone ?? null;
+  const keys = phoneMatchKeys((phone ?? '').replace(/\D/g, ''));
+  if (!keys.length) return null;
+
+  const existing = await db('clients')
+    .whereIn(DIGITS('phone'), keys)
+    .orderByRaw("FIELD(status, 'active', 'lead', 'archived')")
+    .orderBy('updated_at', 'desc')
+    .first('id');
+  const clientId =
+    existing?.id ??
+    (
+      await createClient({
+        name: (deal.contact_name || deal.company || deal.title).slice(0, 160),
+        company: deal.company ?? null,
+        phone: phone.slice(0, 30),
+        email: deal.email ?? null,
+        status: 'lead',
+        responsible_id: deal.owner_id ?? null,
+        lead_id: deal.lead_id ?? null,
+      })
+    ).id;
+
+  await db('deals').where({ id: deal.id }).update({ client_id: clientId });
+  return findClientById(clientId);
+}
+
+function findClientByJid(jid) {
+  return baseQuery().where('c.whatsapp_jid', jid).first();
 }

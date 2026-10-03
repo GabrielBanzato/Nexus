@@ -14,7 +14,7 @@ const INVALIDATES = {
   triage: [['triage'], ['metrics']],
   kanban: [['kanban']],
   tickets: [['tickets'], ['activity']],
-  clients: [['clients'], ['activity']],
+  clients: [['clients'], ['activity'], ['conversations']],
   users: [['users']],
 };
 const ALL_KEYS = [...new Map(Object.values(INVALIDATES).flat().map((key) => [key[0], key])).values()];

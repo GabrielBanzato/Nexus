@@ -41,4 +41,34 @@ export const config = Object.freeze({
     headless: process.env.SCRAPER_HEADLESS !== 'false',
     maxResults: toInt(process.env.SCRAPER_MAX_RESULTS, 50),
   },
+  business: {
+    // Fuso da empresa: datas nas mensagens aos clientes (ex.: confirmação de reunião).
+    // O servidor/Docker corre em UTC; sem isto a hora sairia 3h adiantada.
+    timezone: process.env.BUSINESS_TIMEZONE || 'America/Sao_Paulo',
+  },
+  ai: {
+    // Agente que responde no WhatsApp quando clients.bot_active = true. Requer o Ollama.
+    enabled: process.env.AI_ENABLED === 'true',
+    ollamaUrl: (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, ''),
+    // Escolhido por benchmark (CPU, 2 threads): único candidato com 8/8 nas regras de atendimento.
+    // Mais rápido e um pouco pior: qwen3:1.7b. Nunca a tag "qwen3.5:2b" (= q8_0, 2,7 GB).
+    model: process.env.AI_MODEL || 'qwen3.5:2b-q4_K_M',
+    // Threads de CPU para gerar (0 = o Ollama decide). No VPS de 2 vCPU: 2.
+    numThread: toInt(process.env.AI_NUM_THREAD, 0),
+    // Espera o cliente parar de escrever (várias mensagens curtas seguidas) antes de responder.
+    debounceMs: toInt(process.env.AI_DEBOUNCE_MS, 6_000),
+    historyLimit: toInt(process.env.AI_HISTORY_LIMIT, 10),
+    timeoutMs: toInt(process.env.AI_TIMEOUT_MS, 90_000),
+    // Trava contra loops (ex.: outro robô do outro lado): depois disto, passa para um humano.
+    maxRepliesPerHour: toInt(process.env.AI_MAX_REPLIES_PER_HOUR, 15),
+  },
+  whatsapp: {
+    // Desligado por padrão: sobe um Chrome dedicado e exige ler o QR Code no painel.
+    enabled: process.env.WHATSAPP_ENABLED === 'true',
+    // Sessão autenticada (equivale a estar logado no WhatsApp): guardar fora do Git, em volume.
+    sessionDir: process.env.WHATSAPP_SESSION_DIR || '.wwebjs_auth',
+    headless: process.env.WHATSAPP_HEADLESS !== 'false',
+    // Número desconhecido: cria um cliente "lead" (true) ou ignora a mensagem (false).
+    autoCreateClients: process.env.WHATSAPP_AUTO_CREATE_CLIENTS !== 'false',
+  },
 });

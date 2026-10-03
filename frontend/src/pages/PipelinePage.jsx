@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DndContext, DragOverlay, useDroppable } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Building2, CalendarClock, Handshake, Plus, Search, StickyNote, Target, Trash2, TrendingUp, Trophy, UserRound } from 'lucide-react';
-import { addNote, createDeal, deleteDeal, getDealBoard, moveDeal, updateDeal } from '../lib/api.js';
+import { Building2, CalendarCheck, CalendarClock, Handshake, MessageCircle, Plus, Search, StickyNote, Target, Trash2, TrendingUp, Trophy, UserRound } from 'lucide-react';
+import { addNote, createDeal, deleteDeal, getDealBoard, moveDeal, scheduleMeeting, updateDeal } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
 import {
@@ -13,6 +13,7 @@ import {
   OPEN_DEAL_STAGES,
   formatCurrency,
   formatCurrencyCompact,
+  formatMeetingAt,
   formatRelative,
   parseMoney,
 } from '../lib/labels.js';
@@ -77,6 +78,7 @@ function DealCard({ deal, overlay = false, onNote }) {
         </p>
       )}
       {deal.stage === 'lost' && deal.lost_reason && <p className="mt-1.5 line-clamp-2 text-xs text-red-300/80">{deal.lost_reason}</p>}
+      {deal.stage === 'meeting' && deal.meeting_at && <MeetingChip meetingAt={deal.meeting_at} />}
       {deal.last_note && (
         <p className="mt-2 flex gap-1.5 rounded-lg bg-neutral-900/80 px-2 py-1.5 text-xs text-neutral-400" title={`Última nota · ${formatRelative(deal.last_note_at)}`}>
           <StickyNote className="mt-0.5 size-3 shrink-0 text-amber-400/70" />
@@ -126,6 +128,24 @@ function DealCard({ deal, overlay = false, onNote }) {
   );
 }
 
+/** Data da reunião no cartão; depois da hora marcada fica âmbar (lembra de avançar o negócio). */
+function MeetingChip({ meetingAt }) {
+  const past = new Date(meetingAt).getTime() < Date.now();
+  return (
+    <p
+      className={cx(
+        'mt-2 flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium ring-1',
+        past ? 'bg-amber-500/10 text-amber-300 ring-amber-500/30' : 'bg-fuchsia-500/10 text-fuchsia-200 ring-fuchsia-500/30',
+      )}
+      title={past ? 'A reunião já aconteceu: mova o negócio para o próximo estágio' : 'Reunião agendada'}
+    >
+      <CalendarClock className="size-3.5 shrink-0" />
+      <span className="truncate">{formatMeetingAt(meetingAt)}</span>
+      {past && <span className="ml-auto shrink-0">· realizada?</span>}
+    </p>
+  );
+}
+
 function SortableDeal({ deal, onOpen, onNote, canDrag }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: deal.id, disabled: !canDrag });
   return (
@@ -154,6 +174,7 @@ function SortableDeal({ deal, onOpen, onNote, canDrag }) {
 
 const EMPTY_COLUMN_TEXT = {
   lead: 'Leads qualificados no Radar de Prospecção aparecem aqui',
+  meeting: 'Arraste para aqui ao marcar uma reunião: pedimos a data e confirmamos ao cliente pelo WhatsApp',
   won: 'Arraste para aqui os clientes fechados',
   lost: 'Negócios perdidos',
 };
@@ -161,8 +182,10 @@ const EMPTY_COLUMN_TEXT = {
 function StageColumn({ stage, deals, totals, onOpen, onNote, canDrag, onAdd }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
   const closedStage = stage.id === 'won' || stage.id === 'lost';
+  // "Reunião Agendada" só se alcança pelo agendamento (data/hora + confirmação), nunca criando direto.
+  const canCreateHere = !closedStage && stage.id !== 'meeting';
 
-  // Em ecrãs largos (xl) as 5 colunas dividem a largura: todas visíveis, sem scroll ao arrastar.
+  // Em ecrãs largos (xl) as colunas dividem a largura: todas visíveis, sem scroll ao arrastar.
   return (
     <section
       aria-label={stage.label}
@@ -196,7 +219,7 @@ function StageColumn({ stage, deals, totals, onOpen, onNote, canDrag, onAdd }) {
         </div>
       </SortableContext>
 
-      {!closedStage && (
+      {canCreateHere && (
         <button
           type="button"
           onClick={() => onAdd(stage.id)}
@@ -306,7 +329,116 @@ function DealForm({ deal, stage, onSaved, formId }) {
 // Detalhe (drawer)
 // ---------------------------------------------------------------------------
 
-function DealDrawer({ deal, canEdit, canDelete, onClose, onMoveTo, onDeleted }) {
+// ---------------------------------------------------------------------------
+// Agendamento de reunião
+// ---------------------------------------------------------------------------
+
+const pad = (n) => String(n).padStart(2, '0');
+const toDateInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const toTimeInput = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+/** Sugestão inicial: a reunião atual (reagendar) ou amanhã às 10:00. */
+function initialMeeting(deal) {
+  if (deal.meeting_at && new Date(deal.meeting_at).getTime() > Date.now()) {
+    const current = new Date(deal.meeting_at);
+    return { date: toDateInput(current), time: toTimeInput(current) };
+  }
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return { date: toDateInput(tomorrow), time: '10:00' };
+}
+
+const previewDate = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' });
+const previewTime = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+/** Mesmo texto que o backend envia (services/meetingNotifier.js), para o vendedor ver antes. */
+function confirmationPreview(deal, when) {
+  const firstName = deal.contact_name?.trim().split(/\s+/)[0];
+  return `Olá${firstName ? `, ${firstName}` : ''}! Sua reunião está confirmada para ${previewDate.format(when)} às ${previewTime.format(when)}. Em breve enviaremos o link. Até lá! 👋`;
+}
+
+/**
+ * Pop-up aberto ao largar um cartão em "Reunião Agendada" (ou ao escolher o estágio no detalhe,
+ * ou em "Reagendar"). Enter/Salvar agenda; Cancelar devolve o cartão à coluna de origem.
+ */
+function MeetingModal({ deal, rescheduling, submitting, error, onCancel, onConfirm }) {
+  const [form, setForm] = useState(() => ({ ...initialMeeting(deal), notify: true }));
+  const [localError, setLocalError] = useState(null);
+
+  const when = form.date && form.time ? new Date(`${form.date}T${form.time}`) : null; // hora local de quem agenda
+  const valid = when && !Number.isNaN(when.getTime());
+  const set = (field) => (event) => {
+    setLocalError(null);
+    setForm((f) => ({ ...f, [field]: event.target.type === 'checkbox' ? event.target.checked : event.target.value }));
+  };
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (!valid) return setLocalError('Indique a data e a hora da reunião.');
+    if (when.getTime() < Date.now()) return setLocalError('Essa data/hora já passou.');
+    onConfirm({ meeting_at: when.toISOString(), notify: form.notify });
+  };
+
+  const noPhone = !deal.phone && !deal.client_id && !deal.lead_id;
+  const shownError = localError ?? error;
+
+  return (
+    <Modal
+      open
+      onClose={onCancel}
+      size="sm"
+      title={
+        <span className="flex items-center gap-2">
+          <CalendarClock className="size-5 text-fuchsia-400" />
+          {rescheduling ? 'Reagendar reunião' : 'Agendar reunião'}
+        </span>
+      }
+      description={deal.title}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onCancel} disabled={submitting}>Cancelar</Button>
+          <Button type="submit" form="meeting-form" icon={CalendarCheck} loading={submitting}>
+            {form.notify ? 'Agendar e confirmar' : 'Agendar'}
+          </Button>
+        </>
+      }
+    >
+      <form id="meeting-form" onSubmit={submit} className="space-y-4" noValidate>
+        {shownError && <p role="alert" className="rounded-xl bg-red-950/40 px-3 py-2 text-sm text-red-300">{shownError}</p>}
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Data" required>
+            {({ id }) => (
+              <input id={id} type="date" value={form.date} min={toDateInput(new Date())} onChange={set('date')} className={inputClass} data-autofocus required />
+            )}
+          </Field>
+          <Field label="Hora" required>
+            {({ id }) => <input id={id} type="time" value={form.time} step={300} onChange={set('time')} className={inputClass} required />}
+          </Field>
+        </div>
+
+        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-neutral-800 p-3 transition hover:border-neutral-700">
+          <input type="checkbox" checked={form.notify} onChange={set('notify')} className="mt-0.5 size-4 accent-red-700" />
+          <span className="min-w-0">
+            <span className="flex items-center gap-1.5 text-sm font-medium text-neutral-200">
+              <MessageCircle className="size-4 text-emerald-400" />
+              Confirmar ao cliente pelo WhatsApp
+            </span>
+            {form.notify && valid && (
+              <span className="mt-2 block rounded-lg rounded-tl-sm bg-emerald-950/40 px-3 py-2 text-xs leading-relaxed text-emerald-100/90 ring-1 ring-emerald-900/50">
+                {confirmationPreview(deal, when)}
+              </span>
+            )}
+            {form.notify && noPhone && (
+              <span className="mt-1.5 block text-xs text-amber-300">Este negócio não tem telefone: a reunião fica agendada, mas a confirmação não será enviada.</span>
+            )}
+          </span>
+        </label>
+      </form>
+    </Modal>
+  );
+}
+
+function DealDrawer({ deal, canEdit, canDelete, onClose, onMoveTo, onReschedule, onDeleted }) {
   const [tab, setTab] = useState('details');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const queryClient = useQueryClient();
@@ -361,6 +493,15 @@ function DealDrawer({ deal, canEdit, canDelete, onClose, onMoveTo, onDeleted }) 
                 </Select>
               )}
             </Field>
+            {deal.stage === 'meeting' && deal.meeting_at && (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-fuchsia-900/50 bg-fuchsia-950/20 px-3 py-2.5">
+                <span className="flex items-center gap-2 text-sm text-fuchsia-100">
+                  <CalendarClock className="size-4 text-fuchsia-400" />
+                  Reunião: <strong className="font-semibold">{formatMeetingAt(deal.meeting_at)}</strong>
+                </span>
+                {canEdit && <Button size="sm" variant="secondary" onClick={() => onReschedule(deal)}>Reagendar</Button>}
+              </div>
+            )}
             <fieldset disabled={!canEdit}>
               <DealForm
                 formId="deal-edit"
@@ -478,6 +619,8 @@ export default function PipelinePage() {
   const [creatingIn, setCreatingIn] = useState(null);
   const [pendingLoss, setPendingLoss] = useState(null); // movimento para "Perdido" à espera do motivo
   const [lossReason, setLossReason] = useState('');
+  // Movimento para "Reunião Agendada" à espera da data/hora: { deal, vars: { id, position?, snapshot?, from } }
+  const [pendingMeeting, setPendingMeeting] = useState(null);
   const [noteFor, setNoteFor] = useState(null);
 
   // Não-admin não envia filtro de pessoa (o backend força o próprio id de qualquer forma).
@@ -518,9 +661,46 @@ export default function PipelinePage() {
         setPendingLoss(vars); // pede o motivo antes de gravar
         return;
       }
+      // Gatilho de reunião: o cartão fica na coluna (otimista) enquanto o pop-up pede a data/hora.
+      if (move.column === 'meeting' && move.from !== 'meeting') {
+        scheduleMutation.reset();
+        setPendingMeeting({ deal: move.item, vars });
+        return;
+      }
       moveMutation.mutate(vars);
     },
   });
+
+  const scheduleMutation = useMutation({
+    mutationFn: ({ vars, meeting_at: meetingAt, notify }) =>
+      scheduleMeeting({ deal_id: vars.id, meeting_at: meetingAt, position: vars.position, notify }),
+    onSuccess: (res) => {
+      setPendingMeeting(null);
+      const { notification } = res.meta;
+      const when = formatMeetingAt(res.data.meeting_at);
+      if (notification.sent) toast.success('Reunião agendada 📅', `${when} · confirmação enviada ao cliente pelo WhatsApp.`);
+      else if (notification.reason === 'SKIPPED') toast.success('Reunião agendada 📅', when);
+      // A reunião ficou agendada; só a mensagem falhou — o vendedor precisa de saber para avisar o cliente.
+      else toast.info('Reunião agendada, mas a confirmação não foi enviada', `${when} · ${notification.message}`);
+      queryClient.invalidateQueries({ queryKey: ['metrics'] });
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      if (notification.client_id) queryClient.invalidateQueries({ queryKey: ['clients'] });
+    },
+    // Erro (ex.: data no passado): o pop-up fica aberto com a mensagem; o cartão só volta se cancelar.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['deals'] }),
+  });
+
+  const cancelMeeting = () => {
+    // Vindo do arrasto há snapshot para desfazer o movimento otimista; do detalhe/reagendar, não.
+    if (pendingMeeting?.vars.snapshot) {
+      queryClient.setQueryData(boardKey, (old) => (old ? { ...old, data: pendingMeeting.vars.snapshot } : old));
+    }
+    setPendingMeeting(null);
+  };
+  const openMeetingFor = (deal) => {
+    scheduleMutation.reset();
+    setPendingMeeting({ deal, vars: { id: deal.id, from: deal.stage } }); // sem position = fim da coluna
+  };
 
   const cancelLoss = () => {
     queryClient.setQueryData(boardKey, (old) => (old ? { ...old, data: pendingLoss.snapshot } : old));
@@ -650,8 +830,23 @@ export default function PipelinePage() {
             if (stage === 'lost' && deal.stage !== 'lost') {
               setLossReason('');
               setPendingLoss(vars);
+            } else if (stage === 'meeting' && deal.stage !== 'meeting') {
+              openMeetingFor(deal);
             } else moveMutation.mutate(vars);
           }}
+          onReschedule={openMeetingFor}
+        />
+      )}
+
+      {pendingMeeting && (
+        <MeetingModal
+          key={pendingMeeting.deal.id}
+          deal={pendingMeeting.deal}
+          rescheduling={pendingMeeting.vars.from === 'meeting'}
+          submitting={scheduleMutation.isPending}
+          error={scheduleMutation.error?.message}
+          onCancel={cancelMeeting}
+          onConfirm={(values) => scheduleMutation.mutate({ vars: pendingMeeting.vars, ...values })}
         />
       )}
 

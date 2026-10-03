@@ -5,6 +5,7 @@ import { ToastProvider } from './components/toast.jsx';
 import Login from './Login.jsx';
 import { AuthProvider } from './lib/auth.jsx';
 import { queryClient } from './lib/queryClient.js';
+import { closeSocket } from './lib/socket.js';
 import {
   SESSION_EXPIRED_EVENT,
   TOKEN_STORAGE_KEY,
@@ -29,6 +30,7 @@ export default function App() {
   // Qualquer 401 da API (token expirado/revogado, conta desativada) derruba a sessão.
   useEffect(() => {
     const handleExpired = () => {
+      closeSocket();
       queryClient.clear();
       setToken(null);
       setNotice('Sua sessão expirou. Entre novamente para continuar.');
@@ -43,6 +45,7 @@ export default function App() {
     const handleStorage = (event) => {
       if (event.key !== TOKEN_STORAGE_KEY && event.key !== null) return;
       const next = getToken();
+      closeSocket(); // a ligação era do utilizador anterior
       queryClient.clear();
       setToken(next);
       setNotice(next ? null : 'A sessão foi terminada noutra aba.');
@@ -69,6 +72,7 @@ export default function App() {
 
   const handleLogout = useCallback(() => {
     clearToken();
+    closeSocket();
     queryClient.clear();
     setNotice(null);
     setToken(null);

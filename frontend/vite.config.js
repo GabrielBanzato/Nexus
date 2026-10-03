@@ -7,8 +7,9 @@ export default defineConfig({
   server: {
     port: 5173,
     // Encaminha /api para o Fastify: evita CORS sem precisar alterar o backend.
+    // ws: true também encaminha o WebSocket do Socket.io (/api/socket.io).
     proxy: {
-      '/api': 'http://localhost:3000',
+      '/api': { target: 'http://localhost:3000', ws: true },
     },
   },
 });

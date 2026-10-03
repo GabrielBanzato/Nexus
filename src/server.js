@@ -4,7 +4,12 @@ import { db, initDatabase, closeDatabase } from './config/database.js';
 import { createScrapeQueue } from './jobs/scrapeQueue.js';
 import { registerErrorHandlers } from './lib/errors.js';
 import { assertAuthConfig, authenticate, registerAuth } from './plugins/auth.js';
+import { registerSocket, rooms } from './plugins/socket.js';
 import { ensureBootstrapAdmin } from './repositories/userRepository.js';
+import { createAiAgent } from './services/aiAgent.js';
+import { createOllamaClient } from './services/ollamaClient.js';
+import { createWhatsAppClient } from './services/whatsappClient.js';
+import { createOwnMessageHandler, createWhatsAppInbox } from './services/whatsappInbox.js';
 import activityLogRoutes from './routes/activityLogRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
@@ -18,6 +23,7 @@ import ticketRoutes from './routes/ticketRoutes.js';
 import timelineRoutes from './routes/timelineRoutes.js';
 import triageRoutes from './routes/triageRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import whatsappRoutes from './routes/whatsappRoutes.js';
 
 export async function buildApp() {
   assertAuthConfig();
@@ -54,6 +60,46 @@ export async function buildApp() {
 
   await registerAuth(app);
 
+  // Socket.io em /api/socket.io (autenticado com o mesmo JWT; usa app.jwt, por isso vem depois).
+  const io = registerSocket(app);
+
+  // Agente de IA: criado depois do WhatsApp (precisa dele para responder); o inbox chama-o
+  // por esta referência.
+  let aiAgent = null;
+  const inboxOptions = { io, logger: app.log, autoCreateClients: config.whatsapp.autoCreateClients };
+
+  // WhatsApp: só com WHATSAPP_ENABLED=true. Criado aqui e arrancado em start(), depois do banco.
+  const whatsapp = config.whatsapp.enabled
+    ? createWhatsAppClient({
+        sessionDir: config.whatsapp.sessionDir,
+        headless: config.whatsapp.headless,
+        logger: app.log.child({ module: 'whatsapp' }),
+        onMessage: createWhatsAppInbox({ ...inboxOptions, onClientMessage: (event) => aiAgent?.onClientMessage(event) }),
+        // Vendedor a responder pelo telemóvel da empresa: grava e pausa a IA nesse cliente.
+        onOwnMessage: createOwnMessageHandler(inboxOptions),
+        onState: (state) => {
+          // Estado completo (inclui o QR) só para os admins...
+          io.to(rooms.admins).emit('whatsapp:state', state);
+          // ...e só o estado para todos (a Central de Atendimento sabe se pode enviar).
+          io.emit('whatsapp:status', { status: state.status });
+        },
+      })
+    : null;
+  app.decorate('whatsapp', whatsapp);
+  app.addHook('onClose', async () => whatsapp?.stop());
+
+  // IA: só com AI_ENABLED=true e com o WhatsApp ligado (é por ele que responde).
+  const ollama = config.ai.enabled
+    ? createOllamaClient({ ...config.ai, baseUrl: config.ai.ollamaUrl, logger: app.log.child({ module: 'ai' }) })
+    : null;
+  if (ollama && whatsapp) {
+    aiAgent = createAiAgent({ ...config.ai, ollama, whatsapp, io, logger: app.log.child({ module: 'ai' }) });
+    app.addHook('onClose', async () => aiAgent.stop());
+  } else if (ollama) {
+    app.log.warn('AI_ENABLED=true mas o WhatsApp está desligado: o agente de IA não vai responder.');
+  }
+  app.decorate('ai', { ollama, agent: aiAgent, model: config.ai.model, enabled: Boolean(aiAgent) });
+
   // Login (público) + /me, troca de senha e registo (protegidos internamente).
   await app.register(authRoutes);
 
@@ -80,6 +126,9 @@ export async function buildApp() {
 
     // Tempo real (Server-Sent Events)
     await protectedApp.register(eventRoutes);
+
+    // WhatsApp (sessão, QR Code e conversas)
+    await protectedApp.register(whatsappRoutes);
   });
 
   app.addHook('onClose', async () => closeDatabase());
@@ -108,6 +157,10 @@ async function start() {
     await initDatabase({ logger: app.log });
     await ensureBootstrapAdmin(app.log);
     await app.listen({ port: config.server.port, host: config.server.host });
+    // Em segundo plano: o Chrome do WhatsApp leva alguns segundos e não deve atrasar a API.
+    app.whatsapp?.start();
+    // Idem para a IA: baixa o modelo na primeira vez (~1,9 GB) e deixa-o carregado na RAM.
+    if (app.ai.enabled) app.ai.ollama.warmup();
   } catch (err) {
     app.log.error(err);
     process.exit(1);

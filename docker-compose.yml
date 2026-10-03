@@ -76,11 +76,52 @@ services:
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
       # Atrás do Nginx: o IP real do usuário vem em X-Forwarded-For (rate limit do login).
       TRUST_PROXY: "true"
+      # WhatsApp (whatsapp-web.js): ligue e leia o QR Code no painel (admin).
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_AUTO_CREATE_CLIENTS: ${WHATSAPP_AUTO_CREATE_CLIENTS:-true}
+      BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-America/Sao_Paulo}
+      # Agente de IA (precisa do serviço "ollama": COMPOSE_PROFILES=ai no .env).
+      AI_ENABLED: ${AI_ENABLED:-false}
+      OLLAMA_URL: http://ollama:11434
+      AI_MODEL: ${AI_MODEL:-qwen3.5:2b-q4_K_M}
+      AI_NUM_THREAD: ${AI_NUM_THREAD:-2}
+    volumes:
+      # Sessão autenticada do WhatsApp: sobrevive a rebuilds/restarts (sem novo QR).
+      - whatsapp_session:/app/.wwebjs_auth
     ports:
       - "3000:3000"
     depends_on:
       db:
         condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # IA local (Qwen via Ollama, só CPU). Só sobe com o perfil "ai": COMPOSE_PROFILES=ai no .env.
+  # Dimensionado para o VPS KVM 2 (2 vCPU, 8 GB). Medido com o qwen3.5:2b-q4_K_M na CPU:
+  # ~2,0 GB residentes (pico ~2,9 GB); Chrome do WhatsApp ~0,8–1,2 GB. Pior caso da stack
+  # inteira (IA a gerar + scraper a correr) ≈ 6,2 GB de 8.
+  # O backend baixa o modelo na primeira vez (~1,9 GB) e mantém-no carregado.
+  ollama:
+    image: ollama/ollama:0.35.1
+    profiles: ["ai"]
+    restart: unless-stopped
+    environment:
+      OLLAMA_NUM_PARALLEL: "1" # 2 vCPU: gerações em paralelo só se atrasariam umas às outras
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_KEEP_ALIVE: "-1" # modelo sempre na RAM: sem recarga do disco na 1.ª resposta
+    volumes:
+      - ollama_models:/root/.ollama
+    # Margem sobre o pico medido (~2,9 GB): no Linux o cache do ficheiro do modelo (mmap) também
+    # conta para o limite do container. Sem porta publicada (só a rede interna).
+    mem_limit: 3500m
+    # Prioridade de CPU baixa (padrão 1024): a IA usa os 2 vCPU quando estão livres, mas MySQL,
+    # backend e Chrome passam à frente quando precisam. Com 1 thread a resposta dobraria
+    # (medido: 8,9s → 18s), por isso a IA fica com 2 threads e cede pela prioridade.
+    cpu_shares: 256
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
 
   # ---------------------------------------------------------------------------
   frontend:
@@ -110,3 +151,5 @@ services:
 
 volumes:
   mysql_data:
+  whatsapp_session:
+  ollama_models:

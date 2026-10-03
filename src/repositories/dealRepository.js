@@ -2,13 +2,19 @@ import { db } from '../config/database.js';
 import { notFound } from '../lib/errors.js';
 import { createOrderedBoard } from '../lib/orderedBoard.js';
 
-// lead = "Triagem/Novo" (entrada dos leads qualificados no Radar), awaiting = "Aguardando Resposta".
-export const DEAL_STAGES = ['lead', 'negotiation', 'awaiting', 'won', 'lost'];
-export const OPEN_STAGES = ['lead', 'negotiation', 'awaiting'];
+// lead = "Triagem/Novo" (entrada dos leads qualificados no Radar), meeting = "Reunião Agendada",
+// awaiting = "Aguardando Resposta".
+export const DEAL_STAGES = ['lead', 'meeting', 'negotiation', 'awaiting', 'won', 'lost'];
+export const OPEN_STAGES = ['lead', 'meeting', 'negotiation', 'awaiting'];
+/**
+ * Estágios abertos onde se entra sem dados extra. "meeting" exige data/hora (e dispara a
+ * confirmação por WhatsApp): só via POST /api/pipeline/schedule-meeting.
+ */
+export const DIRECT_STAGES = OPEN_STAGES.filter((stage) => stage !== 'meeting');
 export const DEAL_FIELDS = ['title', 'company', 'contact_name', 'phone', 'email', 'value', 'owner_id', 'client_id', 'expected_close_date'];
 
 /** Probabilidade de fecho por estágio, para a previsão ponderada do pipeline. */
-export const STAGE_PROBABILITY = { lead: 0.1, negotiation: 0.4, awaiting: 0.6, won: 1, lost: 0 };
+export const STAGE_PROBABILITY = { lead: 0.1, meeting: 0.25, negotiation: 0.4, awaiting: 0.6, won: 1, lost: 0 };
 
 const board = createOrderedBoard({ table: 'deals', columnField: 'stage', notFound: () => notFound('Negócio') });
 
@@ -124,6 +130,18 @@ export async function moveDeal(id, { stage, position, lostReason }, afterMove) {
   });
 
   return { deal: await findDealById(id), from, to, clientCreatedId: extra.clientCreatedId };
+}
+
+/**
+ * Agenda (ou reagenda) a reunião: move para "Reunião Agendada" e grava `meeting_at` na mesma
+ * transação. Vindo de Fechado/Perdido, o negócio é reaberto (regras do moveDeal).
+ * @returns {Promise<{ deal, from, to }>}
+ */
+export async function scheduleMeeting(id, { meetingAt, position }) {
+  const { deal, from, to } = await moveDeal(id, { stage: 'meeting', position }, async (trx) => {
+    await trx('deals').where({ id }).update({ meeting_at: meetingAt });
+  });
+  return { deal, from, to };
 }
 
 /**

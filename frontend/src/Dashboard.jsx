@@ -80,7 +80,7 @@ const DEFAULT_FILTERS = { nicho: '', grupo: '', contato: 'todos', visibilidade: 
 const TOGGLEABLE_CONTACT = new Set(['NOVO', 'CONTATADO']);
 
 // Negócio vivo (aberto ou ganho): o lead já está no pipeline, não há o que requalificar.
-const LIVE_DEAL_STAGES = new Set(['lead', 'negotiation', 'awaiting', 'won']);
+const LIVE_DEAL_STAGES = new Set(['lead', 'meeting', 'negotiation', 'awaiting', 'won']);
 
 /**
  * Mesma regra da Triagem (e do backend, que responde 409 fora dela): requalifica-se um lead já

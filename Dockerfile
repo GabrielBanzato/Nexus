@@ -64,6 +64,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --chown=node:node src ./src
 
+# Sessão do WhatsApp: criada aqui (dono "node") para o volume nomeado herdar as permissões.
+ENV WHATSAPP_SESSION_DIR=/app/.wwebjs_auth
+RUN mkdir -p /app/.wwebjs_auth
+
 EXPOSE 3000
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \

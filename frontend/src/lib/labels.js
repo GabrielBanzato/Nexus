@@ -37,6 +37,7 @@ export const KANBAN_COLUMNS = [
 
 export const DEAL_STAGES = [
   { id: 'lead', label: 'Triagem/Novo', dot: 'bg-sky-400', probability: 0.1 },
+  { id: 'meeting', label: 'Reunião Agendada', dot: 'bg-fuchsia-400', probability: 0.25 },
   { id: 'negotiation', label: 'Em Negociação', dot: 'bg-amber-400', probability: 0.4 },
   { id: 'awaiting', label: 'Aguardando Resposta', dot: 'bg-violet-400', probability: 0.6 },
   { id: 'won', label: 'Cliente Fechado', dot: 'bg-emerald-400', probability: 1 },
@@ -46,6 +47,12 @@ export const DEAL_STAGE_META = Object.fromEntries(DEAL_STAGES.map((s) => [s.id, 
 // Estágios antigos (antes da migração) ainda aparecem no histórico de auditoria.
 const LEGACY_STAGE_LABELS = { qualification: 'Qualificação', proposal: 'Proposta' };
 export const OPEN_DEAL_STAGES = DEAL_STAGES.filter((s) => s.id !== 'won' && s.id !== 'lost');
+/** Estágios onde se entra sem dados extra. "Reunião Agendada" exige data/hora (modal de agendamento). */
+export const DIRECT_DEAL_STAGES = OPEN_DEAL_STAGES.filter((s) => s.id !== 'meeting');
+
+const meetingDateTime = new Intl.DateTimeFormat('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+/** "qui., 01/10, 14:30" (no fuso de quem vê). */
+export const formatMeetingAt = (value) => (value ? meetingDateTime.format(new Date(value)) : '');
 
 export const TRIAGE_STATUS_META = {
   pending: { label: 'Na fila', tone: 'sky' },
@@ -66,6 +73,21 @@ export const parseMoney = (text) =>
   Number(String(text ?? '').replace(/[^\d,.-]/g, '').replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.')) || 0;
 export const formatPercent =(value) => (value === null || value === undefined ? '—' : `${Math.round(value * 100)}%`);
 
+const AI_INTENT_LABELS = {
+  preco: 'pediu preço/orçamento',
+  agendar_reuniao: 'quer marcar uma conversa',
+  suporte: 'precisa de suporte',
+  reclamacao: 'fez uma reclamação',
+};
+/** Porque é que a IA passou a conversa a um humano (backend: services/aiAgent.js). */
+export const AI_HANDOFF_REASONS = {
+  intencao: (intent) => `o cliente ${AI_INTENT_LABELS[intent] ?? 'precisa de atendimento humano'}`,
+  mensagem_nao_texto: () => 'o cliente mandou áudio/imagem (a IA não os entende)',
+  resposta_bloqueada: () => 'a IA não teve uma resposta segura para dar',
+  limite_respostas: () => 'muitas mensagens seguidas com a IA',
+  falha_ia: () => 'a IA está indisponível',
+};
+
 /** Texto humano de uma entrada do histórico (activity_logs). */
 export function describeActivity(log) {
   const d = log.details ?? {};
@@ -83,6 +105,18 @@ export function describeActivity(log) {
       return { title: `fechou o negócio (${stage(d.from)} → Cliente Fechado)`, body: d.value ? formatCurrency(d.value) : null, kind: 'won' };
     case 'deal.lost':
       return { title: 'marcou o negócio como perdido', body: d.lost_reason ? `Motivo: ${d.lost_reason}` : null, kind: 'lost' };
+    case 'deal.meeting':
+      return {
+        title: `agendou reunião para ${formatMeetingAt(d.meeting_at)}`,
+        body: d.notified ? 'Confirmação enviada ao cliente pelo WhatsApp.' : d.reason === 'SKIPPED' ? null : 'Confirmação por WhatsApp não enviada.',
+        kind: 'move',
+      };
+    case 'client.human_takeover':
+      return { title: 'assumiu o atendimento no WhatsApp (IA pausada)', kind: 'edit' };
+    case 'client.bot_resumed':
+      return { title: 'devolveu o atendimento à IA', kind: 'edit' };
+    case 'ai.handoff':
+      return { title: `A IA passou a conversa para um humano: ${AI_HANDOFF_REASONS[d.reason]?.(d.intent) ?? d.reason}`, kind: 'move' };
     case 'deal.delete':
       return { title: `apagou o negócio "${d.title}"`, kind: 'delete' };
     case 'client.create':

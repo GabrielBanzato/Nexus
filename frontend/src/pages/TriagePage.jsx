@@ -36,7 +36,7 @@ import {
 } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
-import { OPEN_DEAL_STAGES, ROLE_META, TRIAGE_STATUS_META, formatRelative, parseMoney } from '../lib/labels.js';
+import { DIRECT_DEAL_STAGES, ROLE_META, TRIAGE_STATUS_META, formatRelative, parseMoney } from '../lib/labels.js';
 import { useToast } from '../components/toast.jsx';
 import { GroupBadge, Rating, WhatsAppButton, cardClass, shortAddress } from '../components/leadVisuals.jsx';
 import {
@@ -233,7 +233,7 @@ function DecisionModal({ lead, status, onClose, onDone }) {
                 <Field label="Estágio inicial">
                   {({ id }) => (
                     <Select id={id} value={form.stage} onChange={set('stage')}>
-                      {OPEN_DEAL_STAGES.map((s) => (
+                      {DIRECT_DEAL_STAGES.map((s) => (
                         <option key={s.id} value={s.id}>{s.label}</option>
                       ))}
                     </Select>

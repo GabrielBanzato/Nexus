@@ -309,6 +309,38 @@ const SCHEMA = [
     `,
   },
   {
+    table: 'meetings',
+    sql: `
+      CREATE TABLE IF NOT EXISTS meetings (
+        id            INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+        code          VARCHAR(32)   NOT NULL COMMENT 'Código da sala no link (aleatório, difícil de adivinhar)',
+        title         VARCHAR(200)  NOT NULL,
+        deal_id       INT UNSIGNED  NULL,
+        client_id     INT UNSIGNED  NULL,
+        host_user_id  INT UNSIGNED  NULL COMMENT 'Quem conduz (responsável pelo negócio/cliente)',
+        scheduled_at  DATETIME      NULL,
+        status        ENUM('scheduled', 'live', 'ended') NOT NULL DEFAULT 'scheduled',
+        started_at    DATETIME      NULL,
+        ended_at      DATETIME      NULL,
+        created_by    INT UNSIGNED  NULL,
+        created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_meetings_code (code),
+        KEY idx_meetings_deal (deal_id, status),
+        KEY idx_meetings_client (client_id, status),
+        KEY idx_meetings_host_status (host_user_id, status, scheduled_at),
+        CONSTRAINT fk_meetings_deal FOREIGN KEY (deal_id) REFERENCES deals (id) ON DELETE SET NULL,
+        CONSTRAINT fk_meetings_client FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE SET NULL,
+        CONSTRAINT fk_meetings_host FOREIGN KEY (host_user_id) REFERENCES users (id) ON DELETE SET NULL,
+        CONSTRAINT fk_meetings_created_by FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
+  {
     table: 'messages',
     sql: `
       CREATE TABLE IF NOT EXISTS messages (

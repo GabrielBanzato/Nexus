@@ -14,6 +14,7 @@ import {
   scheduleMeeting,
   updateDeal,
 } from '../repositories/dealRepository.js';
+import { ensureMeetingForDeal, meetingLink } from '../repositories/meetingRepository.js';
 import { sendMeetingConfirmation } from '../services/meetingNotifier.js';
 import { email, idParam, nullableId } from './schemas.js';
 
@@ -202,8 +203,11 @@ export default async function dealRoutes(app) {
 
     const { deal, from } = await scheduleMeeting(before.id, { meetingAt, position });
     const hadClient = Boolean(deal.client_id);
+    // Sala de videochamada da plataforma: criada (ou reaproveitada ao reagendar, mantendo o link).
+    const meeting = await ensureMeetingForDeal(deal, { scheduledAt: meetingAt, userId: user.id });
+    const link = meetingLink(meeting.code);
     const notification = notify
-      ? await sendMeetingConfirmation({ whatsapp: app.whatsapp, io: app.io, deal, meetingAt, userId: user.id, logger: request.log })
+      ? await sendMeetingConfirmation({ whatsapp: app.whatsapp, io: app.io, deal, meetingAt, link, userId: user.id, logger: request.log })
       : { sent: false, reason: 'SKIPPED' };
 
     await logActivity(request, {
@@ -216,7 +220,7 @@ export default async function dealRoutes(app) {
     // O envio pode ter criado/associado um cliente ao negócio.
     if (!hadClient && notification.client_id) publish('clients', request);
 
-    return { data: await findDealById(deal.id), meta: { notification } };
+    return { data: await findDealById(deal.id), meta: { notification, meeting: { code: meeting.code, link } } };
   });
 
   // Remover do pipeline devolve o lead de origem à fila da Triagem (ver deleteDeal).

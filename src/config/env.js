@@ -41,6 +41,22 @@ export const config = Object.freeze({
     headless: process.env.SCRAPER_HEADLESS !== 'false',
     maxResults: toInt(process.env.SCRAPER_MAX_RESULTS, 50),
   },
+  app: {
+    // Endereço público do painel (sem / no fim): monta o link da sala enviado ao cliente.
+    // Ex.: https://nexus.suaempresa.com.br — sem ele, a confirmação de reunião vai sem link.
+    publicUrl: (process.env.PUBLIC_APP_URL || '').replace(/\/$/, ''),
+  },
+  meet: {
+    // WebRTC P2P (vídeo direto entre navegadores): ótimo até 3 pessoas. Acima disso cada um
+    // teria de enviar um vídeo por participante; aí o certo é um SFU (ex.: LiveKit).
+    maxParticipants: toInt(process.env.MEET_MAX_PARTICIPANTS, 3),
+    // STUN descobre o IP público; o TURN (coturn) retransmite quando a rede bloqueia o P2P.
+    stunUrls: (process.env.STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((s) => s.trim()).filter(Boolean),
+    // Ex.: turn:turn.suaempresa.com.br:3478?transport=udp,turn:turn.suaempresa.com.br:3478?transport=tcp
+    turnUrls: (process.env.TURN_URLS || '').split(',').map((s) => s.trim()).filter(Boolean),
+    // Mesmo segredo do coturn (--static-auth-secret): credenciais temporárias por sessão.
+    turnSecret: process.env.TURN_SECRET || '',
+  },
   business: {
     // Fuso da empresa: datas nas mensagens aos clientes (ex.: confirmação de reunião).
     // O servidor/Docker corre em UTC; sem isto a hora sairia 3h adiantada.

@@ -4,6 +4,7 @@ import { db, initDatabase, closeDatabase } from './config/database.js';
 import { createScrapeQueue } from './jobs/scrapeQueue.js';
 import { registerErrorHandlers } from './lib/errors.js';
 import { assertAuthConfig, authenticate, registerAuth } from './plugins/auth.js';
+import { registerMeetSignaling } from './plugins/meetSignaling.js';
 import { registerSocket, rooms } from './plugins/socket.js';
 import { ensureBootstrapAdmin } from './repositories/userRepository.js';
 import { createAiAgent } from './services/aiAgent.js';
@@ -17,6 +18,7 @@ import dealRoutes from './routes/dealRoutes.js';
 import eventRoutes from './routes/eventRoutes.js';
 import kanbanRoutes from './routes/kanbanRoutes.js';
 import leadRoutes from './routes/leadRoutes.js';
+import meetingRoutes, { publicMeetingRoutes } from './routes/meetingRoutes.js';
 import metricsRoutes from './routes/metricsRoutes.js';
 import scrapeRoutes from './routes/scrapeRoutes.js';
 import ticketRoutes from './routes/ticketRoutes.js';
@@ -62,6 +64,8 @@ export async function buildApp() {
 
   // Socket.io em /api/socket.io (autenticado com o mesmo JWT; usa app.jwt, por isso vem depois).
   const io = registerSocket(app);
+  // Videochamadas: sinalização WebRTC no namespace "/meet" (aceita convidados sem conta).
+  registerMeetSignaling(app, io);
 
   // Agente de IA: criado depois do WhatsApp (precisa dele para responder); o inbox chama-o
   // por esta referência.
@@ -102,6 +106,8 @@ export async function buildApp() {
 
   // Login (público) + /me, troca de senha e registo (protegidos internamente).
   await app.register(authRoutes);
+  // Página da sala para o convidado (público, com limite por IP).
+  await app.register(publicMeetingRoutes);
 
   // Rotas protegidas: tudo registrado neste contexto exige JWT válido de um utilizador ativo.
   await app.register(async (protectedApp) => {
@@ -129,6 +135,9 @@ export async function buildApp() {
 
     // WhatsApp (sessão, QR Code e conversas)
     await protectedApp.register(whatsappRoutes);
+
+    // Videochamadas (salas da equipe)
+    await protectedApp.register(meetingRoutes);
   });
 
   app.addHook('onClose', async () => closeDatabase());

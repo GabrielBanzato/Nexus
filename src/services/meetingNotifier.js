@@ -12,11 +12,16 @@ export function formatMeeting(date) {
   return { date: dateFormat.format(date), time: timeFormat.format(date) };
 }
 
-/** Texto da confirmação. Só usa o nome se houver um contacto (não "Olá, Pizzaria!"). */
-export function meetingConfirmationText({ contactName, meetingAt }) {
+/**
+ * Texto da confirmação. Só usa o nome se houver um contacto (não "Olá, Pizzaria!").
+ * Com `link` (sala de videochamada da plataforma) envia-o já; sem PUBLIC_APP_URL, promete-o.
+ */
+export function meetingConfirmationText({ contactName, meetingAt, link }) {
   const firstName = contactName?.trim().split(/\s+/)[0];
   const { date, time } = formatMeeting(meetingAt);
-  return `Olá${firstName ? `, ${firstName}` : ''}! Sua reunião está confirmada para ${date} às ${time}. Em breve enviaremos o link. Até lá! 👋`;
+  const greeting = `Olá${firstName ? `, ${firstName}` : ''}! Sua reunião está confirmada para ${date} às ${time}.`;
+  if (!link) return `${greeting} Em breve enviaremos o link. Até lá! 👋`;
+  return `${greeting}\n\nNo horário, é só abrir este link no celular ou no computador (não precisa instalar nada):\n${link}\n\nAté lá! 👋`;
 }
 
 const REASONS = {
@@ -32,12 +37,12 @@ const REASONS = {
  * a confirmação é "melhor esforço" e o resultado vai para a UI avisar o vendedor.
  * @returns {Promise<{ sent: boolean, reason?: string, message?: string, client_id?: number, content?: string }>}
  */
-export async function sendMeetingConfirmation({ whatsapp, io, deal, meetingAt, userId, logger }) {
+export async function sendMeetingConfirmation({ whatsapp, io, deal, meetingAt, link = null, userId, logger }) {
   try {
     const client = await ensureClientForDeal(deal);
     if (!client) return { sent: false, reason: 'NO_PHONE', message: REASONS.NO_PHONE };
 
-    const content = meetingConfirmationText({ contactName: deal.contact_name, meetingAt });
+    const content = meetingConfirmationText({ contactName: deal.contact_name, meetingAt, link });
     const { message } = await sendToClient({ whatsapp, io, client, content, senderType: 'bot', senderUserId: userId });
     return { sent: true, client_id: client.id, message_id: message.id, content };
   } catch (err) {

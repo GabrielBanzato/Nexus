@@ -34,6 +34,8 @@ function withNames(query) {
       db.raw(`(SELECT COUNT(*) ${NOTES}) AS notes_count`),
       db.raw(`(SELECT JSON_UNQUOTE(JSON_EXTRACT(n.details, '$.text')) ${NOTES} ORDER BY n.id DESC LIMIT 1) AS last_note`),
       db.raw(`(SELECT n.created_at ${NOTES} ORDER BY n.id DESC LIMIT 1) AS last_note_at`),
+      // Sala de videochamada em aberto deste negócio (botão "Entrar na reunião").
+      db.raw("(SELECT mt.code FROM meetings mt WHERE mt.deal_id = d.id AND mt.status <> 'ended' ORDER BY mt.id DESC LIMIT 1) AS meeting_code"),
     );
 }
 

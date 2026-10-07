@@ -2,7 +2,7 @@ import { sameDayAt } from '../lib/time.js';
 import { rooms } from '../plugins/socket.js';
 import { findClientById, toWhatsAppNumber } from '../repositories/clientRepository.js';
 import { listMeetingsToRemind, meetingLink, updateMeeting } from '../repositories/meetingRepository.js';
-import { clientReminderText, greetingName, hostReminderText, sendMeetingMessage } from '../services/meetingNotifier.js';
+import { clientReminderText, formatMeeting, greetingName, hostReminderText, sendMeetingMessage } from '../services/meetingNotifier.js';
 
 export { sameDayAt }; // usado nos testes
 
@@ -37,7 +37,7 @@ export function remindersDue(meeting, { now, reminderHour, timeZone }) {
  * por quem conduz) e a quem conduz (aviso no Nexus e, se tiver telefone, no WhatsApp dele).
  * Corre a cada minuto; sobrevive a reinícios (o estado está no banco).
  */
-export function createMeetingReminders({ whatsapp, io, logger, timeZone, reminderHour, intervalMs = 60_000 }) {
+export function createMeetingReminders({ whatsapp, io, push, logger, timeZone, reminderHour, intervalMs = 60_000 }) {
   let timer = null;
   let running = false;
 
@@ -62,6 +62,16 @@ export function createMeetingReminders({ whatsapp, io, logger, timeZone, reminde
         meeting: { id: meeting.id, code: meeting.code, title: meeting.title, scheduled_at: scheduledAt, client_name: clientName, link },
         client_notified: clientResult.sent,
       });
+      const time = formatMeeting(scheduledAt).time;
+      push
+        ?.sendToUsers([host.id], {
+          title: kind === 'day' ? `Hoje às ${time}: reunião com ${clientName}` : `Em 1 hora (${time}): reunião com ${clientName}`,
+          body: clientResult.sent ? 'O cliente também foi lembrado pelo WhatsApp. Toque para abrir a sala.' : 'Toque para abrir a sala.',
+          url: link ?? '/',
+          tag: `meeting-${meeting.id}-${kind}`,
+          always: true,
+        })
+        .catch(() => {});
       const number = toWhatsAppNumber(meeting.host_phone);
       if (number && whatsapp?.getState().status === 'ready') {
         await whatsapp

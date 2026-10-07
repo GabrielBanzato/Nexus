@@ -13,6 +13,8 @@ import { ensureBootstrapAdmin } from './repositories/userRepository.js';
 import { createAiAgent } from './services/aiAgent.js';
 import { createOllamaClient } from './services/ollamaClient.js';
 import { createWhatsAppClient } from './services/whatsappClient.js';
+import { publicOrigin } from './repositories/meetingRepository.js';
+import { createPushService } from './services/pushNotifications.js';
 import { createOwnMessageHandler, createWhatsAppInbox } from './services/whatsappInbox.js';
 import activityLogRoutes from './routes/activityLogRoutes.js';
 import authRoutes from './routes/authRoutes.js';
@@ -22,6 +24,7 @@ import eventRoutes from './routes/eventRoutes.js';
 import kanbanRoutes from './routes/kanbanRoutes.js';
 import leadRoutes from './routes/leadRoutes.js';
 import meetingRoutes, { publicMeetingRoutes } from './routes/meetingRoutes.js';
+import pushRoutes from './routes/pushRoutes.js';
 import metricsRoutes from './routes/metricsRoutes.js';
 import scrapeRoutes from './routes/scrapeRoutes.js';
 import ticketRoutes from './routes/ticketRoutes.js';
@@ -73,7 +76,18 @@ export async function buildApp() {
   // Assistente de IA (sugere respostas): criado depois do WhatsApp; o inbox chama-o por esta
   // referência a cada mensagem recebida.
   let aiAgent = null;
-  const inboxOptions = { io, logger: app.log, autoCreateClients: config.whatsapp.autoCreateClients };
+
+  // Notificações no telemóvel (Web Push, app instalado). Chaves preparadas em start(), com o banco.
+  const push = createPushService({
+    logger: app.log.child({ module: 'push' }),
+    // Os serviços de push (Apple inclusive) exigem um contacto: o endereço do painel ou o email do admin.
+    subject: () => publicOrigin() || `mailto:${config.auth.adminEmail}`,
+    publicKey: process.env.VAPID_PUBLIC_KEY,
+    privateKey: process.env.VAPID_PRIVATE_KEY,
+  });
+  app.decorate('push', push);
+
+  const inboxOptions = { io, push, logger: app.log, autoCreateClients: config.whatsapp.autoCreateClients };
 
   // WhatsApp: só com WHATSAPP_ENABLED=true. Criado aqui e arrancado em start(), depois do banco.
   const whatsapp = config.whatsapp.enabled
@@ -108,6 +122,13 @@ export async function buildApp() {
         if (result === 'reset' || result === 'qr') {
           io.to(rooms.admins).emit('whatsapp:needs_qr', { reason: result === 'reset' ? 'daily_restart_failed' : 'logged_out' });
           await logActivity({}, { action: 'whatsapp.daily_reset', details: { result } }).catch(() => {});
+          await push.sendToAdmins({
+            title: 'WhatsApp desconectado',
+            body: 'Leia o QR Code de novo para a Central voltar a enviar e receber mensagens.',
+            url: '/#/equipe',
+            tag: 'whatsapp-qr',
+            always: true,
+          });
         }
       },
     });
@@ -130,6 +151,7 @@ export async function buildApp() {
   const reminders = createMeetingReminders({
     whatsapp,
     io,
+    push,
     logger: app.log.child({ module: 'reminders' }),
     timeZone: config.business.timezone,
     reminderHour: config.business.reminderHour,
@@ -171,6 +193,9 @@ export async function buildApp() {
 
     // Videochamadas (salas da equipe)
     await protectedApp.register(meetingRoutes);
+
+    // Notificações (inscrição dos aparelhos)
+    await protectedApp.register(pushRoutes);
   });
 
   app.addHook('onClose', async () => closeDatabase());
@@ -198,6 +223,7 @@ async function start() {
   try {
     await initDatabase({ logger: app.log });
     await ensureBootstrapAdmin(app.log);
+    await app.push.init();
     await app.listen({ port: config.server.port, host: config.server.host });
     // Em segundo plano: o Chrome do WhatsApp leva alguns segundos e não deve atrasar a API.
     app.whatsapp?.start();

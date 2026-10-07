@@ -9,7 +9,7 @@ const CONNECTION_ERROR = 'Não foi possível conectar ao backend. Verifique se o
  * fetch com JSON, token JWT e tratamento de erro padronizado.
  * Em 401 numa rota protegida, encerra a sessão (o App volta para a tela de login).
  */
-async function request(path, { auth = true, headers, ...options } = {}) {
+export async function request(path, { auth = true, headers, ...options } = {}) {
   const token = auth ? getToken() : null;
   if (auth && !token) {
     notifySessionExpired();

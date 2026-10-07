@@ -79,7 +79,7 @@ export const clientSummary = (client) => ({
  *
  * Depois, `onClientMessage` (o assistente de IA) decide se prepara uma sugestão de resposta.
  */
-export function createWhatsAppInbox({ io, logger, autoCreateClients, onClientMessage }) {
+export function createWhatsAppInbox({ io, logger, autoCreateClients, onClientMessage, push }) {
   return async function handleIncomingMessage(msg) {
     if (msg.fromMe || msg.isStatus || msg.broadcast || !DIRECT_CHAT.test(msg.from)) return;
 
@@ -113,6 +113,15 @@ export function createWhatsAppInbox({ io, logger, autoCreateClients, onClientMes
 
     io.to(clientAudience(client)).emit('new_message', { message, client: clientSummary(client) });
     if (created) publish('clients'); // SSE: listas de clientes abertas recarregam
+
+    // Notificação no telemóvel do parceiro responsável (app instalado). Contactos sem
+    // responsável (pessoais) não: o telemóvel do número já avisa deles.
+    if (client.responsible_id && push) {
+      const body = message.content.length > 140 ? `${message.content.slice(0, 137)}...` : message.content;
+      push
+        .sendToUsers([client.responsible_id], { title: client.name, body, url: `/#/atendimento?c=${client.id}`, tag: `chat-${client.id}` })
+        .catch(() => {});
+    }
 
     onClientMessage?.({ client, message, type: msg.type, sentAt: msg.timestamp ? msg.timestamp * 1000 : Date.now() });
   };

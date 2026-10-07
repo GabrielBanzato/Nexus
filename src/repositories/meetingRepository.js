@@ -15,6 +15,9 @@ export function learnPublicOrigin(origin) {
   if (!config.app.publicUrl && typeof origin === 'string' && /^https?:\/\/[^/\s]+$/.test(origin)) learnedOrigin = origin;
 }
 
+/** Endereço público do painel (PUBLIC_APP_URL ou o aprendido); null se ainda desconhecido. */
+export const publicOrigin = () => config.app.publicUrl || learnedOrigin || null;
+
 /** Link público da sala (para mensagens do servidor). null se o endereço público for desconhecido. */
 export const meetingLink = (code) => {
   const base = config.app.publicUrl || learnedOrigin;

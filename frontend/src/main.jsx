@@ -2,6 +2,10 @@ import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import './index.css';
+import { registerServiceWorker } from './lib/pwa.js';
+
+// App instalado (PWA): notificações e página "sem ligação". Não interfere com a sala de vídeo.
+registerServiceWorker();
 
 // /sala/<código>: videochamada, fora do login (o cliente entra só com o link). Carregada à parte:
 // quem só usa o CRM não descarrega o código da sala, e o cliente não descarrega o CRM.

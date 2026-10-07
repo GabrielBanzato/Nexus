@@ -5,6 +5,7 @@ import { ToastProvider } from './components/toast.jsx';
 import Login from './Login.jsx';
 import { AuthProvider } from './lib/auth.jsx';
 import { queryClient } from './lib/queryClient.js';
+import { forgetPushOnThisDevice } from './lib/pwa.js';
 import { closeSocket } from './lib/socket.js';
 import {
   SESSION_EXPIRED_EVENT,
@@ -71,6 +72,7 @@ export default function App() {
   }, []);
 
   const handleLogout = useCallback(() => {
+    forgetPushOnThisDevice(); // as notificações desta conta não continuam a chegar a este aparelho
     clearToken();
     closeSocket();
     queryClient.clear();

@@ -49,6 +49,9 @@ const AI_INTENT_HINTS = {
   reclamacao: 'fez uma reclamação',
 };
 
+/** Conversa pedida no endereço (#/atendimento?c=12), vinda de uma notificação. */
+const readTargetConversation = () => Number(new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('c')) || null;
+
 // Admin: "Ver tudo" (tudo o que chega ao número) ou "Foco" (só as empresas atribuídas a ele).
 const SCOPE_STORAGE_KEY = 'nexus:attendance-scope';
 function readScope() {
@@ -1048,6 +1051,25 @@ export default function AttendancePage() {
     setSelected(conversation);
     setUnread((u) => (u[conversation.id] ? { ...u, [conversation.id]: 0 } : u));
   };
+
+  // Notificação tocada (#/atendimento?c=<id>): abre essa conversa assim que a lista a tiver.
+  const [targetId, setTargetId] = useState(readTargetConversation);
+  useEffect(() => {
+    const onHash = () => {
+      const id = readTargetConversation();
+      if (id) setTargetId(id);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  useEffect(() => {
+    if (!targetId) return;
+    const row = conversations.data?.data.find((c) => c.id === targetId);
+    if (!row) return;
+    select(row);
+    setTargetId(null);
+    window.history.replaceState(null, '', '#/atendimento'); // F5 não reabre a mesma
+  }, [targetId, conversations.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Não lidas no título da aba: quem está noutra aba vê que chegou mensagem.
   const totalUnread = Object.values(unread).reduce((sum, n) => sum + n, 0);

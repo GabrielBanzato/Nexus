@@ -333,3 +333,28 @@ CREATE TABLE IF NOT EXISTS messages (
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;
+
+-- Configurações geradas pelo próprio sistema (ex.: chaves VAPID das notificações).
+CREATE TABLE IF NOT EXISTS app_settings (
+  name        VARCHAR(64)   NOT NULL,
+  value       TEXT          NOT NULL,
+  updated_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (name)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;
+
+-- Aparelhos inscritos nas notificações (Web Push) de cada membro.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id            INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  user_id       INT UNSIGNED  NOT NULL,
+  endpoint      VARCHAR(512)  NOT NULL COMMENT 'URL do serviço de push do navegador/aparelho',
+  p256dh        VARCHAR(255)  NOT NULL,
+  auth          VARCHAR(64)   NOT NULL,
+  user_agent    VARCHAR(255)  NULL,
+  created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at  DATETIME      NULL,
+
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_push_endpoint (endpoint),
+  KEY idx_push_user (user_id),
+  CONSTRAINT fk_push_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;

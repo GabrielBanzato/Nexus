@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { BarChart3, Building2, Filter, Handshake, LogOut, MessagesSquare, Radar, SquareKanban, Ticket, Users } from 'lucide-react';
 import Dashboard from '../Dashboard.jsx';
 import AttendancePage from '../pages/AttendancePage.jsx';
@@ -15,6 +15,7 @@ import { useHashRoute } from '../lib/useHashRoute.js';
 import { useLiveUpdates } from '../lib/useLiveUpdates.js';
 import { useSocketEvent } from '../lib/socket.js';
 import { useToast } from './toast.jsx';
+import { AppSetupIconButton, AppSetupModal, AppSetupSidebarButton, InstallBanner, useAppSetup } from './AppSetup.jsx';
 import { Avatar, Badge, IconButton, Spinner, cx } from './ui.jsx';
 
 /**
@@ -125,6 +126,8 @@ export default function AppShell() {
   const live = useLiveUpdates(user?.id);
   useMeetingReminders();
   useWhatsAppAlerts(isAdmin);
+  const appSetup = useAppSetup();
+  const [setupOpen, setSetupOpen] = useState(false);
 
   const groups = visibleGroups(isAdmin);
   const routes = groups.flatMap((g) => g.routes);
@@ -210,6 +213,7 @@ export default function AppShell() {
           ))}
         </nav>
         <div className="space-y-3 border-t border-neutral-800 p-4">
+          <AppSetupSidebarButton setup={appSetup} onClick={() => setSetupOpen(true)} />
           <LiveIndicator status={live} />
           {userCard}
         </div>
@@ -222,6 +226,7 @@ export default function AppShell() {
           {brand}
           <div className="ml-auto flex items-center gap-3">
             <LiveIndicator status={live} />
+            <AppSetupIconButton setup={appSetup} onClick={() => setSetupOpen(true)} />
             <Avatar name={user.name} id={user.id} size="sm" />
             <IconButton icon={LogOut} label="Sair" onClick={logout} className="size-9" />
           </div>
@@ -234,9 +239,11 @@ export default function AppShell() {
       {/* Quadros usam a largura toda; páginas de leitura ficam limitadas para não esticar linhas. */}
       <main className="px-4 py-6 sm:px-6 lg:ml-60 lg:px-8">
         <div className={cx(!current.wide && 'mx-auto max-w-[1400px]')}>
+          <InstallBanner setup={appSetup} onOpen={() => setSetupOpen(true)} />
           <Page key={current.path} navigate={navigate} />
         </div>
       </main>
+      <AppSetupModal open={setupOpen} onClose={() => setSetupOpen(false)} setup={appSetup} />
     </div>
   );
 }

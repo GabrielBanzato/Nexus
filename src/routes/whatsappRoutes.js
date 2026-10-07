@@ -7,7 +7,7 @@ import { logActivity } from '../repositories/activityLogRepository.js';
 import { findClientById } from '../repositories/clientRepository.js';
 import { listConversations, listMessages } from '../repositories/messageRepository.js';
 import { clientSummary } from '../services/whatsappInbox.js';
-import { sendToClient } from '../services/whatsappOutbox.js';
+import { sendToClient, whatsappSignature } from '../services/whatsappOutbox.js';
 import { idParam } from './schemas.js';
 
 /** Cliente que o utilizador pode ver: admin qualquer um; os demais, só os seus (senão 404). */
@@ -156,6 +156,8 @@ export default async function whatsappRoutes(app) {
         content: request.body.content.trim(),
         senderType: 'agent',
         senderUserId: user.id,
+        // Número partilhado: o cliente vê quem da equipe está a falar ("*Gabriel*\n...").
+        signature: whatsappSignature(user),
         clientChanges: client.bot_active ? { bot_active: false } : {},
       });
     } catch (err) {

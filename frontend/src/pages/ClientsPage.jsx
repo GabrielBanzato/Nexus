@@ -37,10 +37,11 @@ const STATUS_TABS = [{ value: '', label: 'Todos' }, ...Object.entries(CLIENT_STA
 // ---------------------------------------------------------------------------
 
 function ClientFormModal({ client, onClose }) {
-  const { user, isManager } = useAuth();
+  // Cada parceiro trabalha as suas empresas: só o admin escolhe/transfere o responsável.
+  const { user, isAdmin } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { data: users = [] } = useUserDirectory();
+  const { data: users = [] } = useUserDirectory({ enabled: isAdmin });
   const isEdit = Boolean(client?.id);
 
   const [form, setForm] = useState({
@@ -84,7 +85,7 @@ function ClientFormModal({ client, onClose }) {
       status: form.status,
     };
     // Agentes não escolhem responsável (o backend força o próprio agente).
-    if (isManager) body.responsible_id = form.responsible_id ? Number(form.responsible_id) : null;
+    if (isAdmin) body.responsible_id = form.responsible_id ? Number(form.responsible_id) : null;
     mutation.mutate(body);
   };
 
@@ -145,18 +146,23 @@ function ClientFormModal({ client, onClose }) {
               </Select>
             )}
           </Field>
-          <Field label="Responsável" hint={isManager ? undefined : 'Clientes criados por agentes ficam sob a sua responsabilidade.'}>
-            {({ id }) => (
-              <Select id={id} value={form.responsible_id} onChange={set('responsible_id')} disabled={!isManager}>
-                <option value="">Sem responsável</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
+          {/* Seleção de pessoas: só o admin (os demais nem veem a lista da equipe). */}
+          {isAdmin ? (
+            <Field label="Responsável">
+              {({ id }) => (
+                <Select id={id} value={form.responsible_id} onChange={set('responsible_id')}>
+                  <option value="">Sem responsável</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          ) : (
+            !isEdit && <p className="self-end pb-2 text-xs text-neutral-500">O cliente fica sob a sua responsabilidade.</p>
+          )}
         </div>
       </form>
       )}
@@ -169,7 +175,7 @@ function ClientFormModal({ client, onClose }) {
 // ---------------------------------------------------------------------------
 
 export default function ClientsPage() {
-  const { user, isManager } = useAuth();
+  const { user, isAdmin, isManager } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState('');
@@ -209,7 +215,10 @@ export default function ClientsPage() {
     setOffset(0);
   };
 
-  const canEdit = (client) => isManager || client.responsible_id === user?.id;
+  // A lista já vem filtrada pelo servidor (não-admin só recebe os seus).
+  const canEdit = (client) => isAdmin || client.responsible_id === user?.id;
+  // Backend: admin apaga qualquer um; partner só os seus; agent nenhum.
+  const canDelete = (client) => isAdmin || (isManager && client.responsible_id === user?.id);
   const clients = data?.data ?? [];
 
   return (
@@ -318,7 +327,7 @@ export default function ClientsPage() {
                           disabled={!canEdit(client)}
                           onClick={() => setEditing(client)}
                         />
-                        {isManager && <IconButton icon={Trash2} label={`Remover ${client.name}`} onClick={() => setDeleting(client)} className="hover:text-red-400" />}
+                        {canDelete(client) && <IconButton icon={Trash2} label={`Remover ${client.name}`} onClick={() => setDeleting(client)} className="hover:text-red-400" />}
                       </div>
                     </td>
                   </tr>
@@ -351,7 +360,7 @@ export default function ClientsPage() {
                   </span>
                   <div className="flex gap-1">
                     {canEdit(client) && <IconButton icon={Pencil} label={`Editar ${client.name}`} onClick={() => setEditing(client)} />}
-                    {isManager && <IconButton icon={Trash2} label={`Remover ${client.name}`} onClick={() => setDeleting(client)} />}
+                    {canDelete(client) && <IconButton icon={Trash2} label={`Remover ${client.name}`} onClick={() => setDeleting(client)} />}
                   </div>
                 </div>
               </li>

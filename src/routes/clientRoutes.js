@@ -1,6 +1,6 @@
 import { publish } from '../lib/events.js';
 import { forbidden, notFound } from '../lib/errors.js';
-import { isManager, requireRole } from '../plugins/auth.js';
+import { isAdmin, requireRole } from '../plugins/auth.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
 import {
   CLIENT_FIELDS,
@@ -49,25 +49,36 @@ const updateSchema = {
 
 const pick = (source, fields) => Object.fromEntries(fields.filter((f) => source[f] !== undefined).map((f) => [f, source[f]]));
 
+/**
+ * Privacidade (o mesmo número de WhatsApp é partilhado pela equipe): cada parceiro trabalha
+ * as SUAS empresas e não vê as dos outros. Admin vê tudo; os demais, só os clientes de que
+ * são responsáveis. Cliente de outra pessoa responde 404 (não confirma que existe).
+ */
+async function findAccessibleClient(user, id) {
+  const client = await findClientById(id);
+  if (!client || (!isAdmin(user) && client.responsible_id !== user.id)) throw notFound('Cliente');
+  return client;
+}
+
 export default async function clientRoutes(app) {
   app.get('/api/clients', { schema: listSchema }, async (request) => {
-    const { status, responsible_id: responsibleId, q, limit, offset } = request.query;
+    const user = request.currentUser;
+    const { status, q, limit, offset } = request.query;
+    // Não-admin: SEMPRE os próprios, ignorando o responsible_id vindo da query.
+    const responsibleId = isAdmin(user) ? request.query.responsible_id : user.id;
     return listClients({ status, responsibleId, q, limit, offset });
   });
 
   app.get('/api/clients/:id', { schema: { params: idParam } }, async (request) => {
-    const client = await findClientById(request.params.id);
-    if (!client) throw notFound('Cliente');
-    return { data: client };
+    return { data: await findAccessibleClient(request.currentUser, request.params.id) };
   });
 
   app.post('/api/clients', { schema: createSchema }, async (request, reply) => {
     const user = request.currentUser;
     const fields = pick(request.body, CLIENT_FIELDS);
 
-    // Agentes só criam clientes sob a própria responsabilidade.
-    if (!isManager(user)) fields.responsible_id = user.id;
-    else if (fields.responsible_id === undefined) fields.responsible_id = user.id;
+    // Só o admin cria clientes para outra pessoa (os demais criam para si).
+    if (!isAdmin(user) || fields.responsible_id === undefined) fields.responsible_id = user.id;
 
     const client = await createClient(fields);
     await logActivity(request, {
@@ -82,14 +93,10 @@ export default async function clientRoutes(app) {
 
   app.patch('/api/clients/:id', { schema: updateSchema }, async (request) => {
     const user = request.currentUser;
-    const before = await findClientById(request.params.id);
-    if (!before) throw notFound('Cliente');
-
-    if (!isManager(user)) {
-      if (before.responsible_id !== user.id) throw forbidden('Só pode editar clientes sob a sua responsabilidade.');
-      if (request.body.responsible_id !== undefined && request.body.responsible_id !== user.id) {
-        throw forbidden('Apenas admin/partner podem transferir a responsabilidade de um cliente.');
-      }
+    const before = await findAccessibleClient(user, request.params.id);
+    // Transferir uma empresa para outro parceiro (ou atribuir uma conversa nova): só o admin.
+    if (!isAdmin(user) && request.body.responsible_id !== undefined && request.body.responsible_id !== user.id) {
+      throw forbidden('Apenas o admin pode transferir um cliente para outra pessoa.');
     }
 
     const fields = pick(request.body, CLIENT_FIELDS);
@@ -108,8 +115,8 @@ export default async function clientRoutes(app) {
     '/api/clients/:id',
     { schema: { params: idParam }, preHandler: requireRole('admin', 'partner') },
     async (request, reply) => {
-      const before = await findClientById(request.params.id);
-      if (!before) throw notFound('Cliente');
+      // Partner apaga só os seus; admin qualquer um.
+      const before = await findAccessibleClient(request.currentUser, request.params.id);
 
       await deleteClient(before.id); // tickets do cliente ficam com client_id = NULL (FK SET NULL)
       await logActivity(request, {

@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowLeft, Bot, Check, CircleAlert, Clock, Headset, MessagesSquare, QrCode, Search, SendHorizontal, Video, WifiOff } from 'lucide-react';
-import { createMeeting, getClientMessages, listConversations, meetingUrl, sendClientMessage, setBotStatus } from '../lib/api.js';
+import { createMeeting, getClientMessages, listConversations, meetingUrl, sendClientMessage, setBotStatus, updateClient } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
-import { useDebouncedValue } from '../lib/hooks.js';
+import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
 import { useSocketConnected, useSocketEvent } from '../lib/socket.js';
 import { useToast } from '../components/toast.jsx';
 import { AI_HANDOFF_REASONS } from '../lib/labels.js';
@@ -116,7 +116,7 @@ function patchConversation(queryClient, clientId, patch) {
 // Lista de conversas (sidebar)
 // ---------------------------------------------------------------------------
 
-function ConversationItem({ conversation, active, unread, aiTyping, onSelect }) {
+function ConversationItem({ conversation, active, unread, aiTyping, unassigned, onSelect }) {
   return (
     <li>
       <button
@@ -142,6 +142,11 @@ function ConversationItem({ conversation, active, unread, aiTyping, onSelect }) 
             ) : (
               <span className={cx('min-w-0 flex-1 truncate text-xs', unread ? 'text-neutral-200' : 'text-neutral-500')}>{lastPreview(conversation)}</span>
             )}
+            {unassigned && (
+              <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                Sem responsável
+              </span>
+            )}
             {!conversation.bot_active && (
               <Headset className="size-3.5 shrink-0 text-amber-400/80" aria-label="Atendimento humano" />
             )}
@@ -157,7 +162,7 @@ function ConversationItem({ conversation, active, unread, aiTyping, onSelect }) 
   );
 }
 
-function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect, waStatus, onOpenConnect, realtime, aiTyping }) {
+function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect, waStatus, onOpenConnect, realtime, aiTyping, showUnassigned }) {
   const conversations = query.data?.data ?? [];
   return (
     // Telemóvel: lista OU conversa. Uma só classe de display por breakpoint (flex vs hidden não podem coexistir).
@@ -197,7 +202,15 @@ function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect
         ) : (
           <ul className={cx('divide-y divide-neutral-800/60 transition-opacity', query.isFetching && query.isPlaceholderData && 'opacity-60')}>
             {conversations.map((c) => (
-              <ConversationItem key={c.id} conversation={c} active={c.id === selectedId} unread={unread[c.id] ?? 0} aiTyping={Boolean(aiTyping[c.id])} onSelect={onSelect} />
+              <ConversationItem
+                key={c.id}
+                conversation={c}
+                active={c.id === selectedId}
+                unread={unread[c.id] ?? 0}
+                aiTyping={Boolean(aiTyping[c.id])}
+                unassigned={showUnassigned && !c.responsible_id}
+                onSelect={onSelect}
+              />
             ))}
           </ul>
         )}
@@ -209,6 +222,44 @@ function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect
 // ---------------------------------------------------------------------------
 // Conversa aberta
 // ---------------------------------------------------------------------------
+
+/**
+ * Admin: atribui a conversa a um parceiro. O número é partilhado; cada empresa é de UM
+ * parceiro, e só ele (e o admin) a vê. Números novos chegam sem responsável e só o admin os
+ * vê até atribuir. Ao trocar, a conversa some da Central do anterior (filtro no servidor).
+ */
+function ResponsibleSelect({ conversation }) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { data: users = [] } = useUserDirectory();
+  const mutation = useMutation({
+    mutationFn: (responsibleId) => updateClient(conversation.id, { responsible_id: responsibleId }),
+    onSuccess: (client) => {
+      patchConversation(queryClient, client.id, { responsible_id: client.responsible_id, responsible_name: client.responsible_name });
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      toast.success('Responsável atualizado', `${client.name} → ${client.responsible_name ?? 'sem responsável'}`);
+    },
+    onError: (err) => toast.error('Não foi possível atribuir', err.message),
+  });
+  return (
+    <select
+      aria-label={`Responsável por ${conversation.name}`}
+      title="Parceiro que atende esta empresa (só ele e o admin veem a conversa)"
+      value={conversation.responsible_id ?? ''}
+      disabled={mutation.isPending}
+      onChange={(e) => mutation.mutate(e.target.value ? Number(e.target.value) : null)}
+      className={cx(
+        'hidden h-9 max-w-40 shrink-0 cursor-pointer rounded-full border bg-[#141414] px-3 text-xs outline-none sm:block',
+        conversation.responsible_id ? 'border-neutral-700 text-neutral-200' : 'border-amber-700/70 text-amber-300',
+      )}
+    >
+      <option value="">Sem responsável</option>
+      {users.map((u) => (
+        <option key={u.id} value={u.id}>{u.name}</option>
+      ))}
+    </select>
+  );
+}
 
 /**
  * Videochamada na plataforma: cria a sala, envia o link ao cliente pelo WhatsApp (fica no
@@ -376,8 +427,14 @@ function MessageBubble({ message, mine, onRetry }) {
   );
 }
 
-/** `disabled` = histórico ainda a carregar (a mensagem provisória não teria onde entrar). */
-function Composer({ disabled, onSend }) {
+/** Mesma regra do backend (whatsappOutbox.whatsappSignature): primeiro nome, sem * _ ~ `. */
+const signatureOf = (user) => String(user?.name ?? '').trim().split(/\s+/)[0]?.replace(/[*_~`]/g, '').slice(0, 40) || null;
+
+/**
+ * `disabled` = histórico ainda a carregar (a mensagem provisória não teria onde entrar).
+ * `signature`: o número é partilhado pela equipe, por isso cada envio sai com "*Nome*" no topo.
+ */
+function Composer({ disabled, onSend, signature }) {
   const [text, setText] = useState('');
   const ref = useRef(null);
 
@@ -403,6 +460,11 @@ function Composer({ disabled, onSend }) {
   return (
     <form onSubmit={submit} className="flex items-end gap-2 border-t border-neutral-800 bg-[#141414] p-3">
       <div className="min-w-0 flex-1">
+        {signature && (
+          <p className="mb-1.5 text-[11px] text-neutral-500">
+            Suas mensagens chegam ao cliente assinadas como <strong className="font-semibold text-neutral-300">*{signature}*</strong>
+          </p>
+        )}
         <textarea
           ref={ref}
           rows={1}
@@ -574,6 +636,7 @@ function ChatView({ conversation, waStatus, aiTyping, onBack, onOpenConnect }) {
               .join(' · ')}
           </p>
         </div>
+        {isAdmin && <ResponsibleSelect conversation={conversation} />}
         <VideoCallButton conversation={conversation} canSend={canSend} />
         <BotStatusToggle conversation={conversation} />
       </header>
@@ -629,7 +692,7 @@ function ChatView({ conversation, waStatus, aiTyping, onBack, onOpenConnect }) {
       </div>
 
       {canSend ? (
-        <Composer key={clientId} disabled={!messages.data} onSend={(content) => send(content)} />
+        <Composer key={clientId} disabled={!messages.data} signature={signatureOf(user)} onSend={(content) => send(content)} />
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800 bg-[#141414] px-4 py-3">
           <p className="flex items-center gap-2 text-sm text-neutral-400">
@@ -739,6 +802,7 @@ export default function AttendancePage() {
           onOpenConnect={openConnect}
           realtime={realtime}
           aiTyping={aiTyping}
+          showUnassigned={isAdmin} // só o admin vê conversas sem responsável (e atribui-as)
         />
         {current ? (
           <ChatView

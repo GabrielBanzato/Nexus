@@ -7,6 +7,20 @@ import { clientSummary } from './whatsappInbox.js';
 const coded = (code, message) => Object.assign(new Error(message), { code });
 
 /**
+ * Assinatura de quem escreve: o número de WhatsApp é PARTILHADO pela equipe, por isso cada
+ * mensagem enviada pelo Nexus leva o primeiro nome do utilizador em negrito na 1.ª linha:
+ *   *Gabriel*
+ *   Olá dona Cleusa, tudo bem?
+ * Tira os caracteres de formatação do WhatsApp (* _ ~ `) para um nome não partir o negrito.
+ */
+export function whatsappSignature(user) {
+  const first = String(user?.name ?? '').trim().split(/\s+/)[0] ?? '';
+  return first.replace(/[*_~`]/g, '').slice(0, 40) || null;
+}
+
+const signed = (content, signature) => (signature ? `*${signature}*\n${content}` : content);
+
+/**
  * Envia um texto a um cliente pelo WhatsApp da empresa e trata do resto, sempre igual para
  * quem envia (Central de Atendimento, confirmação de reunião, futura IA):
  *  1. envia (pelo contacto já conhecido ou pelo telefone do cliente);
@@ -16,15 +30,18 @@ const coded = (code, message) => Object.assign(new Error(message), { code });
  *  5. emite `new_message` para quem pode ver o cliente.
  * Só grava depois de o WhatsApp aceitar: se o envio falhar, nada fica registado.
  *
+ * `signature` (whatsappSignature(user)) vai só no texto ENVIADO; no histórico fica a mensagem
+ * original — a Central já mostra quem escreveu cada balão.
+ *
  * @throws erro com `code`: WHATSAPP_DISABLED | NO_PHONE | WHATSAPP_NOT_READY | NOT_ON_WHATSAPP
  * @returns {Promise<{ message: object, client: object }>}
  */
-export async function sendToClient({ whatsapp, io, client, content, senderType, senderUserId = null, clientChanges = {} }) {
+export async function sendToClient({ whatsapp, io, client, content, senderType, senderUserId = null, signature = null, clientChanges = {} }) {
   if (!whatsapp) throw coded('WHATSAPP_DISABLED', 'A integração com o WhatsApp está desligada.');
   const number = toWhatsAppNumber(client.phone);
   if (!client.whatsapp_jid && !number) throw coded('NO_PHONE', 'Este cliente não tem um telefone válido para WhatsApp.');
 
-  const sent = await whatsapp.sendText({ jid: client.whatsapp_jid, number }, content);
+  const sent = await whatsapp.sendText({ jid: client.whatsapp_jid, number }, signed(content, signature));
 
   const message = await saveMessage({ clientId: client.id, senderType, content, waMessageId: sent.waMessageId, senderUserId });
   await db('clients').where({ id: client.id }).update({ updated_at: db.fn.now(), ...clientChanges });

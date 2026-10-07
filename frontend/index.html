@@ -12,6 +12,13 @@
     <!-- "black" (não translúcida): a página começa abaixo da barra de estado do iPhone. -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Nexus" />
+    <!-- Regista o service worker já no HTML (o mais cedo possível; analisadores de PWA, como o
+         PWABuilder, procuram-no aqui). O app volta a chamar register() e recebe o mesmo. -->
+    <script>
+      if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
+        navigator.serviceWorker.register('/sw.js').catch(function () {});
+      }
+    </script>
     <title>Nexus · Radar de Prospecção</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23991b1b'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='white' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='2.5' fill='white'/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />

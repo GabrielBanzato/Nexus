@@ -35,9 +35,8 @@ if (typeof window !== 'undefined') {
 /** Regista o service worker (só em produção: em dev o Vite serve outra coisa em /sw.js). */
 export function registerServiceWorker() {
   if (!('serviceWorker' in navigator) || import.meta.env.DEV) return;
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('Service worker não registado', err));
-  });
+  // O index.html já o regista cedo; aqui só garante (mesmo registo) e mostra o erro, se houver.
+  navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('Service worker não registado', err));
   navigator.serviceWorker.addEventListener('message', (event) => {
     // Notificação tocada com o app já aberto (navigate() falhou): muda de página aqui.
     if (event.data?.type === 'navigate' && event.data.url) window.location.href = event.data.url;

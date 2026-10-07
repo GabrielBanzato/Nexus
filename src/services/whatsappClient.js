@@ -1,5 +1,5 @@
-import { mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import QRCode from 'qrcode';
 import wwebjs from 'whatsapp-web.js';
 
@@ -23,6 +23,41 @@ export const WHATSAPP_STATUSES = ['idle', 'initializing', 'qr', 'authenticated',
  * falha sempre; bases curtas funcionam sempre. Linux/Docker não têm este limite.
  */
 const WINDOWS_MAX_SESSION_DIR = 100;
+
+const CHROME_LOCKS = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+
+/**
+ * Apaga as travas do Chrome deixadas na sessão. O Chrome grava nelas o nome da máquina que abriu
+ * o perfil; no Docker, cada novo container (redeploy, reinício do VPS) tem outro hostname, e o
+ * Chrome recusa abrir "um perfil em uso noutro computador" (Code: 21) — mesmo sem ninguém a
+ * usá-lo. Só este processo usa a sessão e o navegador anterior já foi fechado (destroyClient),
+ * por isso as travas que restam são sempre restos de um arranque anterior.
+ * @returns {number} quantas travas foram removidas
+ */
+export function clearStaleChromeLocks(dataPath) {
+  let removed = 0;
+  let entries = [];
+  try {
+    entries = readdirSync(dataPath, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  // LocalAuth: um perfil por clientId em <dataPath>/session[-<clientId>].
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('session')) continue;
+    for (const lock of CHROME_LOCKS) {
+      const path = join(dataPath, entry.name, lock);
+      try {
+        lstatSync(path); // lstat: SingletonLock é um link simbólico para "host-pid", que não existe
+      } catch {
+        continue; // não há trava
+      }
+      rmSync(path, { force: true });
+      removed += 1;
+    }
+  }
+  return removed;
+}
 
 /** Pasta da sessão, absoluta e criada. Lança erro com a solução se o caminho não vai funcionar. */
 function resolveSessionDir(dir) {
@@ -140,6 +175,10 @@ export function createWhatsAppClient({ sessionDir, headless = true, onMessage, o
       if (!err.permanent) scheduleRetry();
       return;
     }
+
+    // Sessão vinda de outro container (redeploy): sem isto o Chrome recusa abrir o perfil.
+    const cleared = clearStaleChromeLocks(dataPath);
+    if (cleared) logger.info({ cleared }, 'WhatsApp: travas antigas do Chrome removidas da sessão');
 
     const current = new Client({
       authStrategy: new LocalAuth({ dataPath }),

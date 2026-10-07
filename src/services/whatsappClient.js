@@ -91,11 +91,24 @@ function resolveSessionDir(dir) {
  * @param {(state: object) => void} [options.onState] Chamado a cada mudança de estado.
  * @param {{ info: Function, warn: Function, error: Function }} options.logger
  */
-export function createWhatsAppClient({ sessionDir, headless = true, onMessage, onOwnMessage, onState, logger }) {
+export function createWhatsAppClient({
+  sessionDir,
+  headless = true,
+  onMessage,
+  onOwnMessage,
+  onState,
+  onSessionReset,
+  logger,
+  readyStallMs = 3 * 60_000,
+  maxStuckRestarts = 2,
+}) {
   let client = null;
   let stopped = true;
   let retryTimer = null;
   let attempts = 0;
+  // Vigia do "QR lido, a sincronizar..." eterno: autenticou mas o 'ready' nunca chega.
+  let readyWatch = null;
+  let stuckRestarts = 0;
 
   // Envios do próprio Nexus, para o 'message_create' não os confundir com o vendedor no telemóvel.
   // O evento pode chegar ANTES de sendMessage resolver (texto em curso) ou DEPOIS (id já conhecido).
@@ -140,6 +153,8 @@ export function createWhatsAppClient({ sessionDir, headless = true, onMessage, o
   const getState = () => ({ ...state });
 
   async function destroyClient() {
+    clearTimeout(readyWatch);
+    readyWatch = null;
     const current = client;
     client = null;
     try {
@@ -159,6 +174,50 @@ export function createWhatsAppClient({ sessionDir, headless = true, onMessage, o
       await destroyClient();
       if (!stopped) boot();
     }, delay);
+  }
+
+  /** Apaga a sessão guardada (o próximo arranque pede QR Code). */
+  function wipeSession() {
+    try {
+      const dataPath = resolveSessionDir(sessionDir);
+      for (const entry of readdirSync(dataPath, { withFileTypes: true })) {
+        if (entry.isDirectory() && entry.name.startsWith('session')) rmSync(join(dataPath, entry.name), { recursive: true, force: true });
+      }
+    } catch (err) {
+      logger.error({ err }, 'WhatsApp: não foi possível apagar a sessão');
+    }
+  }
+
+  /**
+   * Autenticou mas não ficou pronto: o WhatsApp Web às vezes fica preso no ecrã de
+   * sincronização depois de um reinício (whatsapp-web.js nunca emite 'ready'). Reinicia o
+   * navegador com a mesma sessão; se voltar a prender maxStuckRestarts vezes seguidas, a sessão
+   * está estragada: apaga-a e pede o QR Code de novo (avisa via onSessionReset).
+   */
+  async function onReadyStalled() {
+    if (stopped || state.status === 'ready') return;
+    stuckRestarts += 1;
+    clearTimeout(retryTimer);
+    retryTimer = null;
+    await destroyClient();
+    if (stuckRestarts > maxStuckRestarts) {
+      logger.warn({ stuckRestarts }, 'WhatsApp: continua preso a sincronizar; a apagar a sessão para ler o QR de novo');
+      stuckRestarts = 0;
+      wipeSession();
+      onSessionReset?.('stuck_syncing');
+    } else {
+      logger.warn({ stuckRestarts }, 'WhatsApp: preso a sincronizar; a reiniciar a ligação');
+    }
+    if (!stopped) boot();
+  }
+
+  /** (Re)arma o vigia: sem progresso em readyStallMs depois de autenticar → onReadyStalled. */
+  function armReadyWatch(current) {
+    clearTimeout(readyWatch);
+    readyWatch = setTimeout(() => {
+      if (client === current) onReadyStalled();
+    }, readyStallMs);
+    readyWatch.unref?.();
   }
 
   function boot() {
@@ -197,8 +256,19 @@ export function createWhatsAppClient({ sessionDir, headless = true, onMessage, o
       // O WhatsApp renova o QR a cada ~20s; o painel pede sempre o mais recente.
       setState({ status: 'qr', qr: await QRCode.toDataURL(qr, { margin: 1, width: 320 }), qr_updated_at: new Date() });
     }));
-    current.on('authenticated', live(() => setState({ status: 'authenticated', qr: null, qr_updated_at: null })));
+    current.on('authenticated', live(() => {
+      setState({ status: 'authenticated', qr: null, qr_updated_at: null });
+      armReadyWatch(current);
+    }));
+    // Progresso da sincronização (telemóvel com muitas conversas demora): enquanto avança, espera.
+    current.on('loading_screen', live((percent) => {
+      if (state.status === 'authenticated') armReadyWatch(current);
+      logger.info({ percent }, 'WhatsApp: a sincronizar');
+    }));
     current.on('ready', live(() => {
+      clearTimeout(readyWatch);
+      readyWatch = null;
+      stuckRestarts = 0;
       attempts = 0;
       setState({ status: 'ready', qr: null, qr_updated_at: null, phone: current.info?.wid?.user ?? null, error: null });
       logger.info({ phone: state.phone }, 'WhatsApp: sessão pronta');
@@ -286,14 +356,7 @@ export function createWhatsAppClient({ sessionDir, headless = true, onMessage, o
       retryTimer = null;
       attempts = 0;
       await destroyClient();
-      try {
-        const dataPath = resolveSessionDir(sessionDir);
-        for (const entry of readdirSync(dataPath, { withFileTypes: true })) {
-          if (entry.isDirectory() && entry.name.startsWith('session')) rmSync(join(dataPath, entry.name), { recursive: true, force: true });
-        }
-      } catch (err) {
-        logger.error({ err }, 'WhatsApp: não foi possível apagar a sessão');
-      }
+      wipeSession();
       setState({ status: 'disconnected', qr: null, phone: null, error: 'A ligação não voltou no reinício diário: leia o QR Code de novo.' });
       boot();
       return 'reset';

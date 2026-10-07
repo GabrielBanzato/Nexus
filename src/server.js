@@ -89,6 +89,24 @@ export async function buildApp() {
 
   const inboxOptions = { io, push, logger: app.log, autoCreateClients: config.whatsapp.autoCreateClients };
 
+  /**
+   * O WhatsApp ficou sem sessão e precisa do QR Code (reinício diário falhou, ficou preso a
+   * sincronizar, ou o número foi desligado no telemóvel): avisa os admins no Nexus e no celular.
+   */
+  async function notifyNeedsQr(reason) {
+    io.to(rooms.admins).emit('whatsapp:needs_qr', { reason });
+    await logActivity({}, { action: 'whatsapp.daily_reset', details: { result: reason } }).catch(() => {});
+    await push
+      .sendToAdmins({
+        title: 'WhatsApp desconectado',
+        body: 'Leia o QR Code de novo para a Central voltar a enviar e receber mensagens.',
+        url: '/#/equipe',
+        tag: 'whatsapp-qr',
+        always: true,
+      })
+      .catch(() => {});
+  }
+
   // WhatsApp: só com WHATSAPP_ENABLED=true. Criado aqui e arrancado em start(), depois do banco.
   const whatsapp = config.whatsapp.enabled
     ? createWhatsAppClient({
@@ -98,6 +116,8 @@ export async function buildApp() {
         onMessage: createWhatsAppInbox({ ...inboxOptions, onClientMessage: (event) => aiAgent?.onClientMessage(event) }),
         // Mensagem escrita direto no telemóvel do número: grava-a no histórico do cliente.
         onOwnMessage: createOwnMessageHandler(inboxOptions),
+        // Preso a sincronizar mesmo depois de reiniciar: a sessão foi apagada e o painel pede QR.
+        onSessionReset: (reason) => notifyNeedsQr(reason),
         onState: (state) => {
           // Estado completo (inclui o QR) só para os admins...
           io.to(rooms.admins).emit('whatsapp:state', state);
@@ -119,17 +139,7 @@ export async function buildApp() {
       task: async () => {
         const result = await whatsapp.restart({ readyTimeoutMs: config.whatsapp.dailyRestartTimeoutMs });
         app.log.info({ result }, 'WhatsApp: reinício diário concluído');
-        if (result === 'reset' || result === 'qr') {
-          io.to(rooms.admins).emit('whatsapp:needs_qr', { reason: result === 'reset' ? 'daily_restart_failed' : 'logged_out' });
-          await logActivity({}, { action: 'whatsapp.daily_reset', details: { result } }).catch(() => {});
-          await push.sendToAdmins({
-            title: 'WhatsApp desconectado',
-            body: 'Leia o QR Code de novo para a Central voltar a enviar e receber mensagens.',
-            url: '/#/equipe',
-            tag: 'whatsapp-qr',
-            always: true,
-          });
-        }
+        if (result === 'reset' || result === 'qr') await notifyNeedsQr(result === 'reset' ? 'daily_restart_failed' : 'logged_out');
       },
     });
     app.addHook('onClose', async () => daily.stop());

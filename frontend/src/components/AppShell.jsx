@@ -112,9 +112,10 @@ function useWhatsAppAlerts(enabled) {
     if (!enabled) return;
     toast.error(
       'WhatsApp desconectado: leia o QR Code de novo',
-      reason === 'daily_restart_failed'
-        ? 'A ligação não voltou no reinício automático da manhã. Até ler o QR, a Central não envia nem recebe mensagens.'
-        : 'O número foi desligado do WhatsApp Web. Até ler o QR, a Central não envia nem recebe mensagens.',
+      `${{
+        daily_restart_failed: 'A conexão não voltou no reinício automático da manhã.',
+        stuck_syncing: 'O WhatsApp ficou travado sincronizando, mesmo depois de reiniciar.',
+      }[reason] ?? 'O número foi desconectado do WhatsApp Web.'} Até ler o QR, a Central não envia nem recebe mensagens.`,
       { duration: 120_000, action: { label: 'Abrir o QR Code', onClick: () => { window.location.hash = '/equipe'; } } },
     );
   });

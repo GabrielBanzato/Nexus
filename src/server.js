@@ -67,8 +67,8 @@ export async function buildApp() {
   // Videochamadas: sinalização WebRTC no namespace "/meet" (aceita convidados sem conta).
   registerMeetSignaling(app, io);
 
-  // Agente de IA: criado depois do WhatsApp (precisa dele para responder); o inbox chama-o
-  // por esta referência.
+  // Assistente de IA (sugere respostas): criado depois do WhatsApp; o inbox chama-o por esta
+  // referência a cada mensagem recebida.
   let aiAgent = null;
   const inboxOptions = { io, logger: app.log, autoCreateClients: config.whatsapp.autoCreateClients };
 
@@ -79,7 +79,7 @@ export async function buildApp() {
         headless: config.whatsapp.headless,
         logger: app.log.child({ module: 'whatsapp' }),
         onMessage: createWhatsAppInbox({ ...inboxOptions, onClientMessage: (event) => aiAgent?.onClientMessage(event) }),
-        // Vendedor a responder pelo telemóvel da empresa: grava e pausa a IA nesse cliente.
+        // Mensagem escrita direto no telemóvel do número: grava-a no histórico do cliente.
         onOwnMessage: createOwnMessageHandler(inboxOptions),
         onState: (state) => {
           // Estado completo (inclui o QR) só para os admins...
@@ -92,15 +92,15 @@ export async function buildApp() {
   app.decorate('whatsapp', whatsapp);
   app.addHook('onClose', async () => whatsapp?.stop());
 
-  // IA: só com AI_ENABLED=true e com o WhatsApp ligado (é por ele que responde).
+  // IA: só com AI_ENABLED=true e com o WhatsApp ligado (sugere respostas às conversas dele).
   const ollama = config.ai.enabled
     ? createOllamaClient({ ...config.ai, baseUrl: config.ai.ollamaUrl, logger: app.log.child({ module: 'ai' }) })
     : null;
   if (ollama && whatsapp) {
-    aiAgent = createAiAgent({ ...config.ai, ollama, whatsapp, io, logger: app.log.child({ module: 'ai' }) });
+    aiAgent = createAiAgent({ ...config.ai, ollama, io, logger: app.log.child({ module: 'ai' }) });
     app.addHook('onClose', async () => aiAgent.stop());
   } else if (ollama) {
-    app.log.warn('AI_ENABLED=true mas o WhatsApp está desligado: o agente de IA não vai responder.');
+    app.log.warn('AI_ENABLED=true mas o WhatsApp está desligado: a IA não vai sugerir respostas.');
   }
   app.decorate('ai', { ollama, agent: aiAgent, model: config.ai.model, enabled: Boolean(aiAgent) });
 

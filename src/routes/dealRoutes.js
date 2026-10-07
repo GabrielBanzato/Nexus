@@ -207,7 +207,7 @@ export default async function dealRoutes(app) {
     const meeting = await ensureMeetingForDeal(deal, { scheduledAt: meetingAt, userId: user.id });
     const link = meetingLink(meeting.code);
     const notification = notify
-      ? await sendMeetingConfirmation({ whatsapp: app.whatsapp, io: app.io, deal, meetingAt, link, userId: user.id, logger: request.log })
+      ? await sendMeetingConfirmation({ whatsapp: app.whatsapp, io: app.io, deal, meetingAt, link, user, logger: request.log })
       : { sent: false, reason: 'SKIPPED' };
 
     await logActivity(request, {

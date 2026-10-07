@@ -71,6 +71,61 @@ export function listUserDirectory() {
   return db('users').select('id', 'name', 'role').where({ is_active: true }).orderBy('name');
 }
 
+// ---------------------------------------------------------------------------
+// Assinatura no WhatsApp (o número é partilhado pela equipe)
+// ---------------------------------------------------------------------------
+
+/** Palavras do nome sem os caracteres de formatação do WhatsApp (* _ ~ `), que partiriam o negrito. */
+const nameWords = (name) => String(name ?? '').replace(/[*_~`]/g, '').trim().split(/\s+/).filter(Boolean);
+/** Comparação tolerante: "Gabriel" = "gabriel" = "Gabríel". */
+const nameKey = (word) => String(word ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+/**
+ * Assinatura de quem escreve, a partir do nome e dos nomes dos OUTROS membros ativos:
+ * o primeiro nome ("Gabriel"); se outro membro tiver o mesmo primeiro nome, nome + último
+ * sobrenome ("Gabriel Banzato"). validateTeamName garante que isto nunca fica ambíguo.
+ */
+export function signatureFromNames(name, otherNames) {
+  const words = nameWords(name);
+  if (!words.length) return null;
+  const clash = otherNames.some((other) => nameKey(nameWords(other)[0]) === nameKey(words[0]));
+  return (clash && words.length > 1 ? `${words[0]} ${words.at(-1)}` : words[0]).slice(0, 60);
+}
+
+const otherActiveNames = async (userId) =>
+  (await db('users').select('name').where({ is_active: true }).whereNot({ id: userId ?? 0 })).map((u) => u.name);
+
+/** Assinatura que vai na 1.ª linha de cada mensagem enviada pelo Nexus: "*Gabriel*". */
+export async function whatsappSignature(user) {
+  if (!user?.name) return null;
+  return signatureFromNames(user.name, await otherActiveNames(user.id));
+}
+
+/**
+ * Dois membros ativos não podem sair com a mesma assinatura no WhatsApp. Com o primeiro nome
+ * repetido, ambos precisam de sobrenome e os pares nome+sobrenome têm de ser diferentes.
+ * @returns {null | { code: string, message: string }} null = nome aceite
+ */
+export async function validateTeamName(name, { excludingId } = {}) {
+  const words = nameWords(name);
+  const others = (await otherActiveNames(excludingId)).filter((other) => nameKey(nameWords(other)[0]) === nameKey(words[0]));
+  if (!others.length) return null;
+
+  const clash = others[0];
+  if (words.length < 2) {
+    return { code: 'SURNAME_REQUIRED', message: `Já existe outro membro chamado ${words[0]} (${clash}). Informe o sobrenome: ele aparece na assinatura das mensagens do WhatsApp.` };
+  }
+  const withoutSurname = others.find((other) => nameWords(other).length < 2);
+  if (withoutSurname) {
+    return { code: 'OTHER_SURNAME_REQUIRED', message: `Já existe um membro chamado só "${withoutSurname}". Edite-o primeiro e acrescente o sobrenome dele, para as assinaturas não ficarem iguais.` };
+  }
+  const same = others.find((other) => nameKey(nameWords(other).at(-1)) === nameKey(words.at(-1)));
+  if (same) {
+    return { code: 'SIGNATURE_TAKEN', message: `Já existe ${same}: a assinatura seria a mesma. Use outro sobrenome (ex.: o do meio).` };
+  }
+  return null;
+}
+
 export async function countActiveAdmins({ excludingId } = {}) {
   const query = db('users').where({ role: 'admin', is_active: true });
   if (excludingId) query.whereNot({ id: excludingId });

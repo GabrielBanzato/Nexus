@@ -1,13 +1,11 @@
-import { db } from '../config/database.js';
-import { publish } from '../lib/events.js';
 import { AppError, notFound } from '../lib/errors.js';
 import { isAdmin, requireRole } from '../plugins/auth.js';
-import { clientAudience } from '../plugins/socket.js';
 import { logActivity } from '../repositories/activityLogRepository.js';
 import { findClientById } from '../repositories/clientRepository.js';
 import { listConversations, listMessages } from '../repositories/messageRepository.js';
+import { whatsappSignature } from '../repositories/userRepository.js';
 import { clientSummary } from '../services/whatsappInbox.js';
-import { sendToClient, whatsappSignature } from '../services/whatsappOutbox.js';
+import { sendToClient } from '../services/whatsappOutbox.js';
 import { idParam } from './schemas.js';
 
 /** Cliente que o utilizador pode ver: admin qualquer um; os demais, só os seus (senão 404). */
@@ -23,6 +21,9 @@ const conversationsSchema = {
     additionalProperties: false,
     properties: {
       q: { type: 'string', minLength: 1, maxLength: 100 },
+      // Só o admin escolhe: "all" = tudo o que chega ao número (como o app no telemóvel);
+      // "mine" = Foco, só as empresas atribuídas a ele. Os demais veem sempre só as suas.
+      scope: { type: 'string', enum: ['all', 'mine'], default: 'all' },
       limit: { type: 'integer', minimum: 1, maximum: 300, default: 150 },
     },
   },
@@ -39,18 +40,11 @@ const sendSchema = {
   },
 };
 
-const botStatusSchema = {
-  params: idParam,
-  body: {
-    type: 'object',
-    required: ['bot_active'],
-    additionalProperties: false,
-    properties: { bot_active: { type: 'boolean' } },
-  },
-};
-
 const disabled = () =>
   new AppError(503, 'WHATSAPP_DISABLED', 'A integração com o WhatsApp está desligada (defina WHATSAPP_ENABLED=true no servidor).');
+
+const aiDisabled = () =>
+  new AppError(503, 'AI_DISABLED', 'As sugestões da IA estão desligadas (defina AI_ENABLED=true no servidor).');
 
 const messagesSchema = {
   params: idParam,
@@ -63,6 +57,8 @@ const messagesSchema = {
     },
   },
 };
+
+const lastMessageId = async (clientId) => (await listMessages(clientId, { limit: 1 })).data.at(-1)?.id ?? null;
 
 export default async function whatsappRoutes(app) {
   const sessionOnly = { preHandler: requireRole('admin') };
@@ -84,7 +80,7 @@ export default async function whatsappRoutes(app) {
     return { data: { status, qr, qr_updated_at: qrUpdatedAt } };
   });
 
-  // Estado do agente de IA (admin): Ollama no ar, modelo baixado/carregado, última resposta.
+  // Estado da IA (admin): Ollama no ar, modelo baixado/carregado, última sugestão.
   app.get('/api/ai/status', sessionOnly, async () => {
     const ai = app.ai;
     if (!ai?.ollama) return { data: { enabled: false, model: ai?.model ?? null } };
@@ -123,24 +119,38 @@ export default async function whatsappRoutes(app) {
   });
 
   /**
-   * Lista da Central de Atendimento (admin: todos; demais: só os seus clientes).
-   * `meta.whatsapp` diz a todos se dá para enviar agora (sem expor o QR a não-admins).
+   * Lista da Central de Atendimento. Admin: `scope=all` (tudo, inclusive contactos sem
+   * responsável e clientes arquivados com conversa) ou `scope=mine` (Foco). Demais: só os seus.
+   * `meta.whatsapp` diz a todos se dá para enviar agora (sem expor o QR a não-admins);
+   * `meta.signature` é como as mensagens deste utilizador chegam ao cliente; `meta.ai` se há
+   * sugestões da IA.
    */
   app.get('/api/conversations', { schema: conversationsSchema }, async (request) => {
     const user = request.currentUser;
     const { q, limit } = request.query;
-    const data = await listConversations({ responsibleId: isAdmin(user) ? undefined : user.id, q, limit });
+    const scope = isAdmin(user) ? request.query.scope : 'mine';
+    const data = await listConversations({
+      responsibleId: scope === 'mine' ? user.id : undefined,
+      includeArchived: scope === 'all',
+      q,
+      limit,
+    });
     return {
       data,
-      meta: { whatsapp: { enabled: Boolean(app.whatsapp), status: app.whatsapp?.getState().status ?? 'disabled' } },
+      meta: {
+        scope,
+        signature: await whatsappSignature(user),
+        whatsapp: { enabled: Boolean(app.whatsapp), status: app.whatsapp?.getState().status ?? 'disabled' },
+        ai: { enabled: Boolean(app.ai?.agent) },
+      },
     };
   });
 
   /**
    * Envia uma mensagem de texto ao cliente pelo WhatsApp e grava-a (sender_type = agent).
-   * Um humano a responder = o humano assumiu: bot_active passa a false (a IA fica calada até
-   * alguém a reativar). O evento new_message chega a todos os que veem o cliente, inclusive
-   * às outras abas de quem enviou.
+   * O número é partilhado: o texto enviado leva a assinatura de quem escreve ("*Gabriel*\n...").
+   * O evento new_message chega a todos os que veem o cliente, inclusive às outras abas de quem
+   * enviou.
    */
   app.post('/api/clients/:id/messages', { schema: sendSchema }, async (request, reply) => {
     const user = request.currentUser;
@@ -156,44 +166,37 @@ export default async function whatsappRoutes(app) {
         content: request.body.content.trim(),
         senderType: 'agent',
         senderUserId: user.id,
-        // Número partilhado: o cliente vê quem da equipe está a falar ("*Gabriel*\n...").
-        signature: whatsappSignature(user),
-        clientChanges: client.bot_active ? { bot_active: false } : {},
+        signature: await whatsappSignature(user),
       });
     } catch (err) {
       throw toHttpError(err, client);
-    }
-
-    if (client.bot_active) {
-      await logActivity(request, { action: 'client.human_takeover', entityType: 'client', entityId: client.id, details: { name: client.name } });
     }
     return reply.code(201).send({ data: result.message, meta: { client: clientSummary(result.client) } });
   });
 
   /**
-   * "Assumir atendimento" (manual override): liga/desliga a IA para este cliente.
-   * bot_active = false → a IA não responde (um humano assumiu); true → devolve à IA.
-   * Avisa na hora, via Socket.io, todos os que veem o cliente (o botão muda nas outras telas).
+   * Sugestão da IA para a conversa (rascunho que o humano usa/edita e envia, nunca enviado
+   * sozinho). GET: a sugestão atual, se ainda corresponder à última mensagem; `meta.pending`
+   * diz se há uma a ser gerada. POST: gera agora (≈10–20s na CPU do servidor).
    */
-  app.patch('/api/clients/:id/bot-status', { schema: botStatusSchema }, async (request) => {
-    const user = request.currentUser;
-    const client = await findAccessibleClient(user, request.params.id);
-    const botActive = request.body.bot_active;
+  app.get('/api/clients/:id/ai-suggestion', { schema: { params: idParam } }, async (request) => {
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    const agent = app.ai?.agent;
+    if (!agent) return { data: null, meta: { enabled: false, pending: false } };
+    return { data: agent.current(client.id, await lastMessageId(client.id)), meta: { enabled: true, pending: agent.isSuggesting(client.id) } };
+  });
 
-    if (client.bot_active !== botActive) {
-      await db('clients').where({ id: client.id }).update({ bot_active: botActive });
-      await logActivity(request, {
-        action: botActive ? 'client.bot_resumed' : 'client.human_takeover',
-        entityType: 'client',
-        entityId: client.id,
-        details: { name: client.name },
-      });
+  app.post('/api/clients/:id/ai-suggestion', { schema: { params: idParam } }, async (request) => {
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    const agent = app.ai?.agent;
+    if (!agent) throw aiDisabled();
+    if (!(await lastMessageId(client.id))) throw new AppError(422, 'NO_MESSAGES', 'Ainda não há mensagens nesta conversa para a IA sugerir uma resposta.');
+    try {
+      return { data: await agent.suggestNow(client.id) };
+    } catch (err) {
+      request.log.error({ err, clientId: client.id }, 'IA: falha ao gerar a sugestão');
+      throw new AppError(503, 'AI_UNAVAILABLE', 'A IA não conseguiu sugerir uma resposta agora. Tente de novo em instantes.');
     }
-
-    const updated = clientSummary(await findClientById(client.id));
-    app.io.to(clientAudience(updated)).emit('client:bot_status', { client: updated, by: user.id });
-    publish('clients', request); // SSE: listas de clientes abertas recarregam
-    return { data: updated };
   });
 }
 

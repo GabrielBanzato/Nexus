@@ -1,10 +1,10 @@
 /**
- * Prompt e formato de resposta do agente de IA do WhatsApp.
+ * Prompt e formato de resposta do assistente de IA do WhatsApp (SUGESTÕES de resposta: quem
+ * envia é sempre um consultor, que pode editar o rascunho antes).
  *
  * Desenhado para um modelo pequeno (Qwen 3.5 2B, CPU):
- *  - O modelo só CLASSIFICA a intenção e ESCREVE a resposta. A decisão de passar a conversa
- *    para um humano é do código (HANDOFF_INTENTS), não do modelo: regra de negócio não fica
- *    à mercê de um 2B.
+ *  - O modelo CLASSIFICA a intenção (a Central mostra-a: "pediu preço", "quer reunião"...) e
+ *    ESCREVE o rascunho.
  *  - Saída com JSON Schema (structured outputs do Ollama): a geração é restrita à gramática
  *    do schema, por isso o JSON vem sempre válido.
  *  - System prompt FIXO (nada por cliente lá dentro): o llama.cpp reaproveita a cache do
@@ -40,16 +40,10 @@ export const INTENTS = [
 ];
 
 /**
- * Intenções que passam SEMPRE para um humano (o bot responde uma vez, avisa e fica calado).
- * Preço e reunião: é o momento de venda, o vendedor assume. Suporte/reclamação: humano sempre.
- */
-export const HANDOFF_INTENTS = new Set(['preco', 'agendar_reuniao', 'suporte', 'reclamacao']);
-
-/**
  * Guarda de saída: a resposta nega um serviço ("não fazemos", "não oferecemos"...)? Todos os
  * serviços da lista são oferecidos, e o modelo de 2B ainda erra ~2% das vezes em geral (1/48 com
  * este prompt; 4/48 com o anterior) e ~25% no caso "loja de roupas + vender pela internet".
- * O agente autocorrige (correctionMessages) e, se repetir, não envia (passa a humano).
+ * O assistente autocorrige (correctionMessages) e, se repetir, não mostra a sugestão.
  */
 export const DENIES_SERVICE = /n[ãa]o (oferece|oferecemos|fazemos|faz|trabalhamos|atuamos|desenvolvemos|realizamos|cria|criamos)\b/i;
 
@@ -63,7 +57,7 @@ export const RESPONSE_SCHEMA = {
   required: ['intent', 'reply'],
 };
 
-export const SYSTEM_PROMPT = `Você é o assistente virtual da ${BUSINESS_PROFILE.name}, uma empresa de tecnologia que atende negócios locais pelo WhatsApp.
+export const SYSTEM_PROMPT = `Você escreve rascunhos de resposta para um consultor da ${BUSINESS_PROFILE.name}, uma empresa de tecnologia que atende negócios locais pelo WhatsApp. O consultor revisa o rascunho e envia com o nome dele.
 
 O que a ${BUSINESS_PROFILE.name} oferece:
 ${BUSINESS_PROFILE.offer.map((item) => `- ${item}`).join('\n')}
@@ -71,17 +65,17 @@ ${BUSINESS_PROFILE.offer.map((item) => `- ${item}`).join('\n')}
 A ${BUSINESS_PROFILE.name} FAZ todos os serviços acima. Quando o cliente pedir qualquer um deles (${BUSINESS_PROFILE.synonyms}), confirme com entusiasmo que fazemos. Nunca diga que não fazemos um serviço desta lista.
 
 Regras:
-- Responda em português do Brasil, de forma simpática, curta (no máximo 3 frases) e natural, como numa conversa de WhatsApp.
-- Nunca invente preços, prazos, descontos ou promessas. Se perguntarem valores, diga que um consultor vai passar um orçamento sob medida.
-- Se a pessoa quiser marcar uma conversa ou reunião, diga que um consultor vai entrar em contato para combinar o melhor horário.
-- Se for suporte ou reclamação, peça desculpas pelo transtorno e diga que um atendente humano vai assumir.
-- Se a pessoa não tiver interesse, agradeça com educação e encerre.
+- Escreva como o próprio consultor, na primeira pessoa, em português do Brasil: simpático, curto (no máximo 3 frases) e natural, como numa conversa de WhatsApp.
+- Não assine nem se apresente pelo nome: a assinatura é colocada automaticamente.
+- Nunca invente preços, prazos, descontos ou promessas. Se perguntarem valores, pergunte sobre o negócio do cliente para preparar um orçamento sob medida.
+- Se a pessoa quiser conversar ou marcar uma reunião, proponha combinar um dia e horário.
+- Se for suporte ou reclamação, peça desculpas pelo transtorno e pergunte os detalhes do problema.
+- Se a pessoa disser que não tem interesse, só agradeça com educação e se despeça, sem insistir nem oferecer reunião.
 - Não fale de assuntos que não tenham relação com a ${BUSINESS_PROFILE.name}.
-- Você é um assistente virtual: nunca diga que é humano.
 
 Responda SEMPRE em JSON com:
 - "intent": a intenção da ÚLTIMA mensagem do cliente, uma de: ${INTENTS.join(', ')}.
-- "reply": a resposta para enviar ao cliente.`;
+- "reply": o rascunho da resposta ao cliente.`;
 
 /**
  * Autocorreção para a 2.ª tentativa, quando a resposta negou um serviço oferecido. Medido: só

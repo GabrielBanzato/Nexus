@@ -63,7 +63,7 @@ export const config = Object.freeze({
     timezone: process.env.BUSINESS_TIMEZONE || 'America/Sao_Paulo',
   },
   ai: {
-    // Agente que responde no WhatsApp quando clients.bot_active = true. Requer o Ollama.
+    // Assistente que SUGERE respostas na Central (nunca envia sozinho). Requer o Ollama.
     enabled: process.env.AI_ENABLED === 'true',
     ollamaUrl: (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, ''),
     // Escolhido por benchmark (CPU, 2 threads): único candidato com 8/8 nas regras de atendimento.
@@ -71,12 +71,10 @@ export const config = Object.freeze({
     model: process.env.AI_MODEL || 'qwen3.5:2b-q4_K_M',
     // Threads de CPU para gerar (0 = o Ollama decide). No VPS de 2 vCPU: 2.
     numThread: toInt(process.env.AI_NUM_THREAD, 0),
-    // Espera o cliente parar de escrever (várias mensagens curtas seguidas) antes de responder.
+    // Espera o cliente parar de escrever (várias mensagens curtas seguidas) antes de sugerir.
     debounceMs: toInt(process.env.AI_DEBOUNCE_MS, 6_000),
     historyLimit: toInt(process.env.AI_HISTORY_LIMIT, 10),
     timeoutMs: toInt(process.env.AI_TIMEOUT_MS, 90_000),
-    // Trava contra loops (ex.: outro robô do outro lado): depois disto, passa para um humano.
-    maxRepliesPerHour: toInt(process.env.AI_MAX_REPLIES_PER_HOUR, 15),
   },
   whatsapp: {
     // Desligado por padrão: sobe um Chrome dedicado e exige ler o QR Code no painel.

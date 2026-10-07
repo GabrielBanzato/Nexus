@@ -1,5 +1,6 @@
 import { config } from '../config/env.js';
 import { ensureClientForDeal } from '../repositories/clientRepository.js';
+import { whatsappSignature } from '../repositories/userRepository.js';
 import { sendToClient } from './whatsappOutbox.js';
 
 // Criados no arranque: um BUSINESS_TIMEZONE inválido derruba o boot com erro claro,
@@ -33,17 +34,19 @@ const REASONS = {
 
 /**
  * Envia a confirmação da reunião ao cliente (sender_type = bot: mensagem automática, com
- * sender_user_id = quem agendou). NUNCA lança: a reunião já está agendada quando isto corre;
- * a confirmação é "melhor esforço" e o resultado vai para a UI avisar o vendedor.
+ * sender_user_id = quem agendou). Sai assinada por quem agendou ("*Gabriel*"), como as outras
+ * mensagens: o número é partilhado pela equipe. NUNCA lança: a reunião já está agendada quando
+ * isto corre; a confirmação é "melhor esforço" e o resultado vai para a UI avisar o vendedor.
  * @returns {Promise<{ sent: boolean, reason?: string, message?: string, client_id?: number, content?: string }>}
  */
-export async function sendMeetingConfirmation({ whatsapp, io, deal, meetingAt, link = null, userId, logger }) {
+export async function sendMeetingConfirmation({ whatsapp, io, deal, meetingAt, link = null, user, logger }) {
   try {
     const client = await ensureClientForDeal(deal);
     if (!client) return { sent: false, reason: 'NO_PHONE', message: REASONS.NO_PHONE };
 
     const content = meetingConfirmationText({ contactName: deal.contact_name, meetingAt, link });
-    const { message } = await sendToClient({ whatsapp, io, client, content, senderType: 'bot', senderUserId: userId });
+    const signature = await whatsappSignature(user);
+    const { message } = await sendToClient({ whatsapp, io, client, content, senderType: 'bot', senderUserId: user.id, signature });
     return { sent: true, client_id: client.id, message_id: message.id, content };
   } catch (err) {
     if (!REASONS[err.code]) logger.error({ err, dealId: deal.id }, 'Falha ao enviar a confirmação de reunião');

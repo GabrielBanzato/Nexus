@@ -1,7 +1,6 @@
 import { db } from '../config/database.js';
 import { publish } from '../lib/events.js';
 import { clientAudience } from '../plugins/socket.js';
-import { logActivity } from '../repositories/activityLogRepository.js';
 import { findOrCreateWhatsAppClient } from '../repositories/clientRepository.js';
 import { saveMessage } from '../repositories/messageRepository.js';
 
@@ -38,7 +37,6 @@ export const clientSummary = (client) => ({
   status: client.status,
   responsible_id: client.responsible_id,
   responsible_name: client.responsible_name ?? null,
-  bot_active: client.bot_active,
 });
 
 /**
@@ -47,7 +45,7 @@ export const clientSummary = (client) => ({
  *  2. grava em `messages` (sender_type = client), sem duplicar reentregas;
  *  3. emite `new_message` via Socket.io só para quem pode ver o cliente (admins + responsável).
  *
- * Depois, `onClientMessage` (o agente de IA) decide se responde — só com client.bot_active.
+ * Depois, `onClientMessage` (o assistente de IA) decide se prepara uma sugestão de resposta.
  */
 export function createWhatsAppInbox({ io, logger, autoCreateClients, onClientMessage }) {
   return async function handleIncomingMessage(msg) {
@@ -89,11 +87,11 @@ export function createWhatsAppInbox({ io, logger, autoCreateClients, onClientMes
 }
 
 /**
- * Mensagem enviada pelo número da empresa FORA do Nexus (um vendedor a responder pelo
- * telemóvel). Grava-a como mensagem humana e PAUSA a IA nesse cliente: um humano está na
- * conversa e a IA não pode responder por cima dele.
+ * Mensagem enviada pelo número da empresa FORA do Nexus (escrita direto no telemóvel): grava-a
+ * no histórico como mensagem humana sem autor (sender_user_id null), para a conversa na Central
+ * ficar igual à do telemóvel.
  */
-export function createOwnMessageHandler({ io, logger, autoCreateClients }) {
+export function createOwnMessageHandler({ io, autoCreateClients }) {
   return async function handleOwnMessage(msg) {
     const jid = msg.to;
     if (!DIRECT_CHAT.test(jid ?? '')) return;
@@ -115,14 +113,7 @@ export function createOwnMessageHandler({ io, logger, autoCreateClients }) {
     });
     if (!message) return;
 
-    const tookOver = client.bot_active;
-    await db('clients').where({ id: client.id }).update({ updated_at: db.fn.now(), ...(tookOver && { bot_active: false }) });
-    const updated = { ...client, bot_active: false };
-    io.to(clientAudience(updated)).emit('new_message', { message, client: clientSummary(updated) });
-    if (tookOver) {
-      io.to(clientAudience(updated)).emit('client:bot_status', { client: clientSummary(updated), by: null });
-      await logActivity({}, { action: 'client.human_takeover', entityType: 'client', entityId: client.id, details: { name: client.name, via: 'telemovel' } });
-      logger.info({ clientId: client.id }, 'IA pausada: um humano respondeu pelo telemóvel da empresa');
-    }
+    await db('clients').where({ id: client.id }).update({ updated_at: db.fn.now() });
+    io.to(clientAudience(client)).emit('new_message', { message, client: clientSummary(client) });
   };
 }

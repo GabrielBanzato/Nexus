@@ -1,11 +1,12 @@
 import { config } from '../config/env.js';
-import { badRequest, conflict, unauthorized } from '../lib/errors.js';
+import { AppError, badRequest, conflict, unauthorized } from '../lib/errors.js';
 import { authenticate, requireRole, signSessionToken } from '../plugins/auth.js';
 import { logActivity } from '../repositories/activityLogRepository.js';
 import {
   ROLES,
   createUser,
   updateUser,
+  validateTeamName,
   verifyCredentials,
   verifyPassword,
 } from '../repositories/userRepository.js';
@@ -100,6 +101,8 @@ export default async function authRoutes(app) {
       '/api/auth/register',
       { schema: registerSchema, preHandler: requireRole('admin') },
       async (request, reply) => {
+        const nameProblem = await validateTeamName(request.body.name);
+        if (nameProblem) throw new AppError(409, nameProblem.code, nameProblem.message);
         try {
           const user = await createUser(request.body);
           await logActivity(request, {

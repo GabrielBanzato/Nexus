@@ -1,25 +1,66 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, Bot, Check, CircleAlert, Clock, Headset, MessagesSquare, QrCode, Search, SendHorizontal, Video, WifiOff } from 'lucide-react';
-import { createMeeting, getClientMessages, listConversations, meetingUrl, sendClientMessage, setBotStatus, updateClient } from '../lib/api.js';
+import { ArrowDown, ArrowLeft, Bot, Check, CircleAlert, Clock, Eye, MessagesSquare, QrCode, RefreshCw, Search, SendHorizontal, Sparkles, Target, Video, WifiOff, X } from 'lucide-react';
+import {
+  createMeeting,
+  getAiSuggestion,
+  getClientMessages,
+  listConversations,
+  meetingUrl,
+  requestAiSuggestion,
+  sendClientMessage,
+  updateClient,
+} from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
 import { useSocketConnected, useSocketEvent } from '../lib/socket.js';
 import { useToast } from '../components/toast.jsx';
-import { AI_HANDOFF_REASONS } from '../lib/labels.js';
 import { WhatsAppConnectModal, WhatsAppStatusPill } from '../components/WhatsAppConnect.jsx';
 import { Avatar, Button, ConfirmDialog, EmptyState, ErrorState, Spinner, cx, inputClass } from '../components/ui.jsx';
 
 /**
  * Central de Atendimento: conversas do WhatsApp da empresa, estilo WhatsApp Web.
  *
- * Dados: lista em ['conversations', q] e mensagens em ['messages', clientId] (paginadas para
- * trás). Tempo real pelo Socket.io: `new_message` atualiza as duas caches na hora, tanto para
- * mensagens recebidas como para as enviadas por outra pessoa (ou noutra aba). Ao religar o
- * socket, recarrega tudo (pode ter perdido eventos enquanto esteve em baixo).
+ * Dados: lista em ['conversations', { q, scope }], mensagens em ['messages', clientId]
+ * (paginadas para trás) e a sugestão da IA em ['ai-suggestion', clientId]. Tempo real pelo
+ * Socket.io: `new_message` atualiza as caches na hora, tanto para mensagens recebidas como para
+ * as enviadas por outra pessoa (ou noutra aba). Ao religar o socket, recarrega tudo (pode ter
+ * perdido eventos enquanto esteve em baixo).
+ *
+ * O número é partilhado pela equipe: cada mensagem sai assinada por quem a escreveu e a IA só
+ * SUGERE respostas (quem envia é sempre uma pessoa).
  */
 
 const MAX_LENGTH = 4096; // limite do backend (e do WhatsApp) por mensagem
+
+/**
+ * O que a IA percebeu da última mensagem do cliente (backend: ai/prompt.js INTENTS). Só as
+ * intenções que o modelo acerta bem; "sem_interesse" fica de fora (já marcou como tal quem
+ * pediu uma loja virtual).
+ */
+const AI_INTENT_HINTS = {
+  preco: 'pediu preço/orçamento',
+  agendar_reuniao: 'quer marcar uma conversa',
+  suporte: 'precisa de suporte',
+  reclamacao: 'fez uma reclamação',
+};
+
+// Admin: "Ver tudo" (tudo o que chega ao número) ou "Foco" (só as empresas atribuídas a ele).
+const SCOPE_STORAGE_KEY = 'nexus:attendance-scope';
+function readScope() {
+  try {
+    return window.localStorage.getItem(SCOPE_STORAGE_KEY) === 'mine' ? 'mine' : 'all';
+  } catch {
+    return 'all';
+  }
+}
+function saveScope(scope) {
+  try {
+    window.localStorage.setItem(SCOPE_STORAGE_KEY, scope);
+  } catch {
+    // sem armazenamento (janela privada): só não lembra a escolha
+  }
+}
 
 const timeFormat = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
 const weekdayFormat = new Intl.DateTimeFormat('pt-BR', { weekday: 'short' });
@@ -116,7 +157,7 @@ function patchConversation(queryClient, clientId, patch) {
 // Lista de conversas (sidebar)
 // ---------------------------------------------------------------------------
 
-function ConversationItem({ conversation, active, unread, aiTyping, unassigned, onSelect }) {
+function ConversationItem({ conversation, active, unread, aiSuggesting, unassigned, onSelect }) {
   return (
     <li>
       <button
@@ -137,8 +178,8 @@ function ConversationItem({ conversation, active, unread, aiTyping, unassigned, 
             </span>
           </span>
           <span className="mt-0.5 flex items-center gap-2">
-            {aiTyping ? (
-              <span className="min-w-0 flex-1 truncate text-xs text-emerald-400 italic">🤖 IA a escrever...</span>
+            {aiSuggesting ? (
+              <span className="min-w-0 flex-1 truncate text-xs text-sky-400 italic">✨ IA a preparar uma sugestão...</span>
             ) : (
               <span className={cx('min-w-0 flex-1 truncate text-xs', unread ? 'text-neutral-200' : 'text-neutral-500')}>{lastPreview(conversation)}</span>
             )}
@@ -146,9 +187,6 @@ function ConversationItem({ conversation, active, unread, aiTyping, unassigned, 
               <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
                 Sem responsável
               </span>
-            )}
-            {!conversation.bot_active && (
-              <Headset className="size-3.5 shrink-0 text-amber-400/80" aria-label="Atendimento humano" />
             )}
             {unread > 0 && (
               <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white tabular-nums">
@@ -162,8 +200,39 @@ function ConversationItem({ conversation, active, unread, aiTyping, unassigned, 
   );
 }
 
-function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect, waStatus, onOpenConnect, realtime, aiTyping, showUnassigned }) {
+const SCOPES = [
+  { value: 'all', label: 'Ver tudo', icon: Eye, title: 'Tudo o que chega ao número, como no app do telemóvel' },
+  { value: 'mine', label: 'Foco', icon: Target, title: 'Só as empresas atribuídas a você' },
+];
+
+/** Admin: alterna entre ver tudo o que chega ao número e só as suas empresas. */
+function ScopeToggle({ value, onChange }) {
+  return (
+    <div role="radiogroup" aria-label="O que mostrar" className="grid grid-cols-2 gap-1 rounded-xl bg-[#111111] p-1 ring-1 ring-neutral-800">
+      {SCOPES.map(({ value: option, label, icon: Icon, title }) => (
+        <button
+          key={option}
+          type="button"
+          role="radio"
+          aria-checked={value === option}
+          title={title}
+          onClick={() => onChange(option)}
+          className={cx(
+            'flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-semibold transition',
+            value === option ? 'bg-red-900/60 text-white shadow ring-1 ring-red-700/40' : 'text-neutral-400 hover:text-white',
+          )}
+        >
+          <Icon className="size-3.5" />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect, waStatus, onOpenConnect, realtime, aiSuggesting, scope, onScopeChange }) {
   const conversations = query.data?.data ?? [];
+  const showUnassigned = scope === 'all'; // só o admin vê conversas sem responsável (e atribui-as)
   return (
     // Telemóvel: lista OU conversa. Uma só classe de display por breakpoint (flex vs hidden não podem coexistir).
     <aside className={cx('min-h-0 w-full flex-col border-neutral-800 md:w-80 md:border-r lg:w-96', hidden ? 'hidden md:flex' : 'flex')}>
@@ -180,6 +249,7 @@ function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-neutral-500" />
           <input type="search" value={search} onChange={(e) => onSearch(e.target.value)} placeholder="Nome, empresa ou telefone" className={cx(inputClass, 'pl-9')} />
         </label>
+        {onScopeChange && <ScopeToggle value={scope} onChange={onScopeChange} />}
         {!realtime && (
           <p className="flex items-center gap-1.5 text-xs text-amber-300/90" role="status">
             <WifiOff className="size-3.5" />
@@ -197,7 +267,13 @@ function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect
           <EmptyState
             icon={MessagesSquare}
             title={search ? 'Nenhuma conversa encontrada' : 'Sem clientes para atender'}
-            description={search ? 'Tente outro nome ou telefone.' : 'Clientes com telefone aparecem aqui. Quem escrever para o WhatsApp da empresa também.'}
+            description={
+              search
+                ? 'Tente outro nome ou telefone.'
+                : onScopeChange && scope === 'mine'
+                  ? 'Nenhuma empresa atribuída a você ainda. Em "Ver tudo" aparece tudo o que chega ao número.'
+                  : 'Clientes com telefone aparecem aqui. Quem escrever para o WhatsApp da empresa também.'
+            }
           />
         ) : (
           <ul className={cx('divide-y divide-neutral-800/60 transition-opacity', query.isFetching && query.isPlaceholderData && 'opacity-60')}>
@@ -207,7 +283,7 @@ function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect
                 conversation={c}
                 active={c.id === selectedId}
                 unread={unread[c.id] ?? 0}
-                aiTyping={Boolean(aiTyping[c.id])}
+                aiSuggesting={Boolean(aiSuggesting[c.id])}
                 unassigned={showUnassigned && !c.responsible_id}
                 onSelect={onSelect}
               />
@@ -327,68 +403,6 @@ function VideoCallButton({ conversation, canSend }) {
   );
 }
 
-/**
- * "Assumir atendimento" (manual override de clients.bot_active), no cabeçalho do chat.
- *  - Verde "Bot Ativo": a IA pode responder a este cliente. Clicar = o humano assume.
- *  - Vermelho "Assumido por Humano": a IA fica calada. Clicar = devolve à IA.
- * É o sinal que a futura IA consulta antes de responder, para não atropelar o vendedor.
- * Enviar uma mensagem pela Central também passa para "Humano" (no servidor).
- */
-function BotStatusToggle({ conversation }) {
-  const toast = useToast();
-  const queryClient = useQueryClient();
-  const botActive = Boolean(conversation.bot_active);
-
-  const mutation = useMutation({
-    mutationFn: (next) => setBotStatus(conversation.id, next),
-    // Otimista: o botão muda de cor no clique; volta atrás se o servidor recusar.
-    onMutate: (next) => patchConversation(queryClient, conversation.id, { bot_active: next }),
-    onSuccess: (client) => {
-      patchConversation(queryClient, client.id, { bot_active: client.bot_active });
-      toast.success(client.bot_active ? 'Atendimento devolvido ao bot' : 'Você assumiu o atendimento', client.name);
-    },
-    onError: (err, next) => {
-      patchConversation(queryClient, conversation.id, { bot_active: !next });
-      toast.error('Não foi possível alterar o atendimento', err.message);
-    },
-  });
-
-  const Icon = botActive ? Bot : Headset;
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={botActive}
-      aria-label={botActive ? 'Bot ativo. Clique para assumir o atendimento.' : 'Assumido por humano. Clique para devolver ao bot.'}
-      title={botActive ? 'Clique para assumir: o bot deixa de responder a este cliente' : 'Clique para devolver o atendimento ao bot'}
-      disabled={mutation.isPending}
-      onClick={() => mutation.mutate(!botActive)}
-      className={cx(
-        'group inline-flex h-9 shrink-0 items-center gap-2 rounded-full py-1 pr-3 pl-1 text-xs font-semibold ring-1 transition active:scale-[0.97] disabled:cursor-wait disabled:opacity-70',
-        botActive
-          ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/40 hover:bg-emerald-500/25'
-          : 'bg-red-500/15 text-red-300 ring-red-500/40 hover:bg-red-500/25',
-      )}
-    >
-      {/* Trilho do interruptor: a bolinha fica à direita com o bot ativo. */}
-      <span className={cx('relative h-7 w-12 rounded-full transition-colors', botActive ? 'bg-emerald-600' : 'bg-red-700')}>
-        <span
-          className={cx(
-            'absolute top-0.5 flex size-6 items-center justify-center rounded-full bg-white text-neutral-900 shadow transition-all',
-            botActive ? 'left-[calc(100%-1.625rem)]' : 'left-0.5',
-          )}
-        >
-          <Icon className="size-3.5" />
-        </span>
-      </span>
-      <span className="whitespace-nowrap">
-        <span className="sm:hidden">{botActive ? 'Bot' : 'Humano'}</span>
-        <span className="hidden sm:inline">{botActive ? 'Bot Ativo' : 'Assumido por Humano'}</span>
-      </span>
-    </button>
-  );
-}
-
 function MessageBubble({ message, mine, onRetry }) {
   const outgoing = message.sender_type !== 'client';
   const isBot = message.sender_type === 'bot';
@@ -427,16 +441,81 @@ function MessageBubble({ message, mine, onRetry }) {
   );
 }
 
-/** Mesma regra do backend (whatsappOutbox.whatsappSignature): primeiro nome, sem * _ ~ `. */
-const signatureOf = (user) => String(user?.name ?? '').trim().split(/\s+/)[0]?.replace(/[*_~`]/g, '').slice(0, 40) || null;
+/**
+ * Sugestão da IA por cima do campo de mensagem. Nunca é enviada sozinha: "Usar" põe o texto no
+ * campo para a pessoa rever/editar e enviar (com a assinatura dela).
+ */
+function AiSuggestionCard({ ai, onUse }) {
+  const { suggestion, pending, requesting, onRequest, onDismiss } = ai;
+  const busy = pending || requesting;
+
+  if (!suggestion) {
+    return (
+      <button
+        type="button"
+        onClick={onRequest}
+        disabled={busy}
+        className="mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold text-sky-300 ring-1 ring-sky-900/70 transition hover:bg-sky-950/50 disabled:cursor-wait disabled:opacity-80"
+      >
+        {busy ? <RefreshCw className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+        {busy ? 'IA a preparar uma sugestão...' : 'Sugerir resposta com IA'}
+      </button>
+    );
+  }
+
+  const hint = AI_INTENT_HINTS[suggestion.intent];
+  return (
+    <div className="mb-2 rounded-xl bg-sky-950/40 p-2.5 ring-1 ring-sky-900/60" role="status">
+      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-sky-300">
+        <Sparkles className="size-3" />
+        Sugestão da IA{hint && <span className="font-normal text-sky-400/80">· o cliente {hint}</span>}
+        <button type="button" onClick={onDismiss} aria-label="Descartar sugestão" className="ml-auto rounded p-0.5 text-sky-400/70 hover:text-white">
+          <X className="size-3.5" />
+        </button>
+      </div>
+      {suggestion.reply ? (
+        <p className="max-h-24 overflow-y-auto text-sm break-words whitespace-pre-wrap text-sky-50">{suggestion.reply}</p>
+      ) : (
+        <p className="text-xs text-sky-200/80">A IA não teve uma resposta segura para esta mensagem. Responda você mesmo.</p>
+      )}
+      <div className="mt-2 flex gap-2">
+        {suggestion.reply && (
+          <button type="button" onClick={() => onUse(suggestion.reply)} className="rounded-lg bg-sky-800/70 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-sky-700">
+            Usar e editar
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onRequest}
+          disabled={busy}
+          className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-sky-300 ring-1 ring-sky-900/70 transition hover:bg-sky-950/60 disabled:cursor-wait"
+        >
+          <RefreshCw className={cx('size-3', busy && 'animate-spin')} />
+          {busy ? 'A gerar...' : 'Gerar outra'}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * `disabled` = histórico ainda a carregar (a mensagem provisória não teria onde entrar).
  * `signature`: o número é partilhado pela equipe, por isso cada envio sai com "*Nome*" no topo.
+ * `ai`: sugestão da IA (null = IA desligada no servidor).
  */
-function Composer({ disabled, onSend, signature }) {
+function Composer({ disabled, onSend, signature, ai }) {
   const [text, setText] = useState('');
   const ref = useRef(null);
+
+  const applySuggestion = (reply) => {
+    setText(reply);
+    ai.onDismiss();
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      el?.focus();
+      el?.setSelectionRange(reply.length, reply.length);
+    });
+  };
 
   // Cresce com o texto até ~6 linhas; depois faz scroll.
   useLayoutEffect(() => {
@@ -460,6 +539,7 @@ function Composer({ disabled, onSend, signature }) {
   return (
     <form onSubmit={submit} className="flex items-end gap-2 border-t border-neutral-800 bg-[#141414] p-3">
       <div className="min-w-0 flex-1">
+        {ai && <AiSuggestionCard ai={ai} onUse={applySuggestion} />}
         {signature && (
           <p className="mb-1.5 text-[11px] text-neutral-500">
             Suas mensagens chegam ao cliente assinadas como <strong className="font-semibold text-neutral-300">*{signature}*</strong>
@@ -498,7 +578,43 @@ function Composer({ disabled, onSend, signature }) {
   );
 }
 
-function ChatView({ conversation, waStatus, aiTyping, onBack, onOpenConnect }) {
+/**
+ * Sugestão da IA da conversa aberta. Só vale para a última mensagem (`for_message_id`): chegou
+ * ou saiu outra, deixa de aparecer. Chega pelo socket (ai:suggestion) ou pelo botão.
+ */
+function useAiSuggestion({ clientId, enabled, lastMessageId, suggesting }) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [dismissed, setDismissed] = useState(null); // created_at da sugestão descartada
+
+  const query = useQuery({
+    queryKey: ['ai-suggestion', clientId],
+    queryFn: () => getAiSuggestion(clientId),
+    enabled,
+    staleTime: Infinity, // atualizações chegam pelo socket
+  });
+  const mutation = useMutation({
+    mutationFn: () => requestAiSuggestion(clientId),
+    onSuccess: (suggestion) => {
+      queryClient.setQueryData(['ai-suggestion', clientId], (old) => ({ ...old, data: suggestion, meta: { enabled: true, pending: false } }));
+      setDismissed(null);
+    },
+    onError: (err) => toast.error('Sem sugestão da IA', err.message),
+  });
+
+  if (!enabled) return null;
+  const suggestion = query.data?.data;
+  const fresh = suggestion && suggestion.for_message_id === lastMessageId && suggestion.created_at !== dismissed ? suggestion : null;
+  return {
+    suggestion: fresh,
+    pending: suggesting || Boolean(query.data?.meta.pending && !suggestion),
+    requesting: mutation.isPending,
+    onRequest: () => mutation.mutate(),
+    onDismiss: () => setDismissed(suggestion?.created_at ?? null),
+  };
+}
+
+function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, onBack, onOpenConnect }) {
   const { user, isAdmin } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -513,6 +629,8 @@ function ChatView({ conversation, waStatus, aiTyping, onBack, onOpenConnect }) {
 
   // pages[0] = as mais recentes; as seguintes, cada vez mais antigas.
   const list = useMemo(() => (messages.data ? [...messages.data.pages].reverse().flatMap((p) => p.data) : []), [messages.data]);
+  const lastMessageId = list.at(-1)?.id ?? null;
+  const ai = useAiSuggestion({ clientId, enabled: aiEnabled, lastMessageId, suggesting: aiSuggesting });
 
   // ---- Scroll: fica no fundo ao chegar mensagem (se já lá estava), preserva ao carregar antigas.
   const scrollRef = useRef(null);
@@ -543,11 +661,6 @@ function ChatView({ conversation, waStatus, aiTyping, onBack, onOpenConnect }) {
     if (first || mine || atBottomRef.current) scrollToBottom();
     else setNewBelow(true);
   }, [list, user?.id]);
-
-  // O balão "IA a escrever" entra no fim da conversa: se já estava no fundo, acompanha-o.
-  useLayoutEffect(() => {
-    if (aiTyping && atBottomRef.current) scrollToBottom();
-  }, [aiTyping]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -638,7 +751,6 @@ function ChatView({ conversation, waStatus, aiTyping, onBack, onOpenConnect }) {
         </div>
         {isAdmin && <ResponsibleSelect conversation={conversation} />}
         <VideoCallButton conversation={conversation} canSend={canSend} />
-        <BotStatusToggle conversation={conversation} />
       </header>
 
       <div className="relative min-h-0 flex-1">
@@ -663,19 +775,6 @@ function ChatView({ conversation, waStatus, aiTyping, onBack, onOpenConnect }) {
                 </div>
               )}
               {rendered}
-              {aiTyping && (
-                <div className="flex justify-end" role="status">
-                  <span className="flex items-center gap-2 rounded-2xl rounded-br-md bg-sky-950/60 px-3.5 py-2 text-xs text-sky-200 ring-1 ring-sky-900/60">
-                    <Bot className="size-3.5" />
-                    IA a escrever
-                    <span className="flex gap-0.5" aria-hidden="true">
-                      {[0, 150, 300].map((delay) => (
-                        <span key={delay} className="size-1 animate-bounce rounded-full bg-sky-300" style={{ animationDelay: `${delay}ms` }} />
-                      ))}
-                    </span>
-                  </span>
-                </div>
-              )}
             </>
           )}
         </div>
@@ -692,7 +791,13 @@ function ChatView({ conversation, waStatus, aiTyping, onBack, onOpenConnect }) {
       </div>
 
       {canSend ? (
-        <Composer key={clientId} disabled={!messages.data} signature={signatureOf(user)} onSend={(content) => send(content)} />
+        <Composer
+          key={clientId}
+          disabled={!messages.data}
+          signature={signature}
+          ai={list.length ? ai : null} // sem mensagens não há o que responder
+          onSend={(content) => send(content)}
+        />
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800 bg-[#141414] px-4 py-3">
           <p className="flex items-center gap-2 text-sm text-neutral-400">
@@ -717,7 +822,7 @@ function ChatView({ conversation, waStatus, aiTyping, onBack, onOpenConnect }) {
 // ---------------------------------------------------------------------------
 
 export default function AttendancePage() {
-  const { isAdmin } = useAuth();
+  const { user, isAdmin } = useAuth();
   const queryClient = useQueryClient();
   const realtime = useSocketConnected();
   const [search, setSearch] = useState('');
@@ -725,48 +830,56 @@ export default function AttendancePage() {
   const [selected, setSelected] = useState(null);
   const [unread, setUnread] = useState({}); // não lidas nesta sessão, por cliente
   const [liveWaStatus, setLiveWaStatus] = useState(null);
-  const [aiTyping, setAiTyping] = useState({}); // clientId → a IA está a gerar resposta
-  const toast = useToast();
+  const [aiSuggesting, setAiSuggesting] = useState({}); // clientId → a IA está a preparar uma sugestão
   const [connectOpen, setConnectOpen] = useState(false);
+  // Admin escolhe "Ver tudo"/"Foco"; os demais veem sempre só as suas empresas (o servidor garante).
+  const [adminScope, setAdminScope] = useState(readScope);
+  const scope = isAdmin ? adminScope : 'mine';
+  const changeScope = (next) => {
+    setAdminScope(next);
+    saveScope(next);
+  };
 
   const conversations = useQuery({
-    queryKey: ['conversations', { q }],
-    queryFn: () => listConversations({ q: q || undefined }),
+    queryKey: ['conversations', { q, scope }],
+    queryFn: () => listConversations({ q: q || undefined, scope: isAdmin ? scope : undefined }),
     placeholderData: keepPreviousData,
   });
 
   // O evento do socket é mais recente que o meta da lista; sem evento, vale o meta.
   const waStatus = liveWaStatus ?? conversations.data?.meta.whatsapp.status ?? 'disabled';
+  const meta = conversations.data?.meta;
 
-  // Mantém a conversa aberta com os dados mais recentes da lista (bot_active, nome...).
+  // Mantém a conversa aberta com os dados mais recentes da lista (nome, responsável...).
   const selectedId = selected?.id ?? null;
   const fresh = conversations.data?.data.find((c) => c.id === selectedId);
   const current = fresh ?? selected;
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
 
   useSocketEvent('new_message', ({ message, client }) => {
     upsertMessage(queryClient, client.id, message);
     bumpConversation(queryClient, client, message);
-    if (client.id !== selectedIdRef.current && message.sender_type === 'client') {
+    // O admin recebe tudo; no Foco só contam as conversas atribuídas a ele.
+    const visible = scopeRef.current === 'all' || client.responsible_id === user?.id;
+    if (visible && client.id !== selectedIdRef.current && message.sender_type === 'client') {
       setUnread((u) => ({ ...u, [client.id]: (u[client.id] ?? 0) + 1 }));
     }
   });
   useSocketEvent('whatsapp:status', ({ status }) => setLiveWaStatus(status));
-  // IA a gerar a resposta (≈10–15s na CPU do servidor): mostra "a escrever" na lista e no chat.
-  useSocketEvent('ai:typing', ({ client_id: clientId, typing }) => setAiTyping((t) => ({ ...t, [clientId]: typing })));
-  // A IA passou a conversa a um humano: avisa quem a vê (o responsável e os admins).
-  useSocketEvent('ai:handoff', ({ client, reason, intent }) => {
-    patchConversation(queryClient, client.id, { bot_active: false });
-    toast.info(`A IA passou ${client.name} para atendimento humano`, AI_HANDOFF_REASONS[reason]?.(intent) ?? '');
-  });
-  // Outro operador assumiu/devolveu a conversa: o botão muda aqui também, na hora.
-  useSocketEvent('client:bot_status', ({ client }) => patchConversation(queryClient, client.id, { bot_active: client.bot_active }));
+  // IA a preparar uma sugestão (≈10–20s na CPU do servidor): aviso na lista e no chat.
+  useSocketEvent('ai:suggesting', ({ client_id: clientId, on }) => setAiSuggesting((s) => ({ ...s, [clientId]: on })));
+  useSocketEvent('ai:suggestion', ({ client_id: clientId, suggestion }) =>
+    queryClient.setQueryData(['ai-suggestion', clientId], { data: suggestion, meta: { enabled: true, pending: false } }),
+  );
   // Religou: podem ter-se perdido eventos enquanto esteve em baixo. Recarrega do servidor.
   useSocketEvent('connect', () => {
     setLiveWaStatus(null);
     queryClient.invalidateQueries({ queryKey: ['conversations'] });
     queryClient.invalidateQueries({ queryKey: ['messages'] });
+    queryClient.invalidateQueries({ queryKey: ['ai-suggestion'] });
   });
 
   const select = (conversation) => {
@@ -801,15 +914,18 @@ export default function AttendancePage() {
           waStatus={waStatus}
           onOpenConnect={openConnect}
           realtime={realtime}
-          aiTyping={aiTyping}
-          showUnassigned={isAdmin} // só o admin vê conversas sem responsável (e atribui-as)
+          aiSuggesting={aiSuggesting}
+          scope={scope}
+          onScopeChange={isAdmin ? changeScope : undefined}
         />
         {current ? (
           <ChatView
             key={current.id}
             conversation={current}
             waStatus={waStatus}
-            aiTyping={Boolean(aiTyping[current.id])}
+            signature={meta?.signature ?? null}
+            aiEnabled={Boolean(meta?.ai?.enabled)}
+            aiSuggesting={Boolean(aiSuggesting[current.id])}
             onBack={() => setSelected(null)}
             onOpenConnect={openConnect}
           />

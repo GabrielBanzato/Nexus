@@ -1,5 +1,5 @@
 import { publish } from '../lib/events.js';
-import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { AppError, badRequest, conflict, notFound } from '../lib/errors.js';
 import { requireRole } from '../plugins/auth.js';
 import { disconnectUser } from '../plugins/socket.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
@@ -10,6 +10,7 @@ import {
   listUserDirectory,
   listUsers,
   updateUser,
+  validateTeamName,
 } from '../repositories/userRepository.js';
 import { email, idParam, pagination, password } from './schemas.js';
 
@@ -69,6 +70,14 @@ export default async function userRoutes(app) {
       ((request.body.role && request.body.role !== 'admin') || request.body.is_active === false);
     if (losesAdmin && (await countActiveAdmins({ excludingId: id })) === 0) {
       throw badRequest('Não é possível remover o último admin ativo.');
+    }
+
+    // Assinatura do WhatsApp única: vale ao renomear e ao reativar (volta a contar na equipe).
+    const renamed = request.body.name !== undefined && request.body.name.trim() !== before.name;
+    const reactivated = request.body.is_active === true && !before.is_active;
+    if (renamed || reactivated) {
+      const nameProblem = await validateTeamName(request.body.name ?? before.name, { excludingId: id });
+      if (nameProblem) throw new AppError(409, nameProblem.code, nameProblem.message);
     }
 
     let user;

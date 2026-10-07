@@ -42,15 +42,17 @@ const escapeLike = (value) => value.replace(/[\\%_]/g, (char) => `\\${char}`);
 
 /**
  * Lista da Central de Atendimento: clientes contactáveis (com telefone ou conversa no WhatsApp),
- * não arquivados, com a última mensagem — conversas mais recentes primeiro, depois os clientes
- * sem conversa. `responsibleId` restringe aos clientes de um utilizador (privacidade).
+ * com a última mensagem — conversas mais recentes primeiro, depois os clientes sem conversa.
+ * `responsibleId` restringe aos clientes de um utilizador (privacidade e modo "Foco").
+ * Arquivados ficam de fora, exceto com `includeArchived` (modo "Ver tudo": se trocaram
+ * mensagens, aparecem, como no telemóvel).
  */
-export async function listConversations({ responsibleId, q, limit = 100 } = {}) {
+export async function listConversations({ responsibleId, q, limit = 100, includeArchived = false } = {}) {
   const query = db('clients as c')
     .leftJoin('users as u', 'u.id', 'c.responsible_id')
     // Última mensagem por cliente: MAX(id) usa o índice (client_id, id).
     .leftJoin('messages as lm', 'lm.id', db.raw('(SELECT MAX(x.id) FROM messages x WHERE x.client_id = c.id)'))
-    .whereNot('c.status', 'archived')
+    .where((w) => (includeArchived ? w.whereNot('c.status', 'archived').orWhereNotNull('lm.id') : w.whereNot('c.status', 'archived')))
     .where((w) => w.whereNotNull('c.phone').orWhereNotNull('c.whatsapp_jid'))
     .select(
       'c.id',
@@ -58,7 +60,6 @@ export async function listConversations({ responsibleId, q, limit = 100 } = {}) 
       'c.company',
       'c.phone',
       'c.status',
-      'c.bot_active',
       'c.responsible_id',
       'u.name as responsible_name',
       'lm.content as last_message',

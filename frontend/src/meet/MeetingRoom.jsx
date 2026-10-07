@@ -10,12 +10,17 @@ import {
   PhoneOff,
   Radar,
   Settings,
+  Sparkles,
   Square,
   Users,
   Video,
   VideoOff,
+  Volume1,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { getToken, getTokenPayload } from '../lib/session.js';
+import { createBlurredTrack, nativeBlurSupported, setNativeBlur } from './backgroundBlur.js';
 import { createMeetingRecorder, downloadRecording, recordingSupported } from './recorder.js';
 import { useMeshCall } from './useMeshCall.js';
 
@@ -79,12 +84,16 @@ function Centered({ icon: Icon = CircleAlert, tone = 'neutral', title, text, chi
  * <video> ligado a um MediaStream (srcObject não é atributo React). `onElement` entrega o
  * elemento a quem precisa dele (o gravador desenha a partir destes <video>).
  */
-function StreamVideo({ stream, muted, mirrored, onElement, className }) {
+function StreamVideo({ stream, muted, volume = 1, mirrored, onElement, className }) {
   const ref = useRef(null);
   useEffect(() => {
     const el = ref.current;
     if (el && el.srcObject !== stream) el.srcObject = stream ?? null;
   });
+  // Volume só deste participante, só para quem ouve (no iPhone o volume é do sistema: só mudo).
+  useEffect(() => {
+    if (ref.current) ref.current.volume = Math.min(Math.max(volume, 0), 1);
+  }, [volume]);
   return (
     <video
       ref={(el) => {
@@ -99,11 +108,71 @@ function StreamVideo({ stream, muted, mirrored, onElement, className }) {
   );
 }
 
-function Tile({ name, stream, camOff, micOff, mirrored, isSelf, state, onElement, spotlight }) {
+// O navegador deixa mudar o volume de um <video>? (no iPhone/iPad não: é sempre o do sistema)
+const volumeAdjustable = (() => {
+  try {
+    const probe = document.createElement('audio');
+    probe.volume = 0.5;
+    return probe.volume === 0.5;
+  } catch {
+    return false;
+  }
+})();
+
+/**
+ * Volume de UM participante, só para mim (os outros não são afetados): botão no canto do quadro
+ * → controlo deslizante 0–100% e "silenciar". No iPhone só há silenciar.
+ */
+function PeerAudioControl({ name, audio, onChange }) {
+  const [open, setOpen] = useState(false);
+  const silent = audio.muted || audio.volume === 0;
+  const Icon = silent ? VolumeX : audio.volume < 0.5 ? Volume1 : Volume2;
+  const toggleMute = () => onChange({ ...audio, muted: !audio.muted, volume: audio.volume || 1 });
+
+  return (
+    <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={volumeAdjustable ? () => setOpen((v) => !v) : toggleMute}
+        aria-label={volumeAdjustable ? `Volume de ${name}` : silent ? `Voltar a ouvir ${name}` : `Silenciar ${name} para você`}
+        title={volumeAdjustable ? 'Volume deste participante (só para você)' : silent ? 'Voltar a ouvir' : 'Silenciar para você'}
+        className={cx(
+          'flex size-8 items-center justify-center rounded-full backdrop-blur transition',
+          silent ? 'bg-red-900/80 text-red-100' : 'bg-black/55 text-white hover:bg-black/75',
+        )}
+      >
+        <Icon className="size-4" />
+      </button>
+      {open && volumeAdjustable && (
+        <div className="flex items-center gap-2 rounded-xl bg-black/80 px-3 py-2 text-xs text-white shadow-lg backdrop-blur">
+          <button type="button" onClick={toggleMute} aria-label={audio.muted ? 'Voltar a ouvir' : 'Silenciar'} className="text-neutral-300 hover:text-white">
+            {audio.muted ? <VolumeX className="size-4 text-red-300" /> : <Volume2 className="size-4" />}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={audio.muted ? 0 : Math.round(audio.volume * 100)}
+            onChange={(e) => onChange({ muted: false, volume: Number(e.target.value) / 100 })}
+            aria-label={`Volume de ${name}`}
+            className="h-1 w-24 cursor-pointer accent-red-500"
+          />
+          <span className="w-8 text-right tabular-nums">{audio.muted ? 0 : Math.round(audio.volume * 100)}%</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const DEFAULT_AUDIO = { volume: 1, muted: false };
+
+function Tile({ name, stream, camOff, micOff, mirrored, isSelf, state, onElement, spotlight, audio = DEFAULT_AUDIO, onAudioChange }) {
   const connecting = !isSelf && state && state !== 'connected';
   return (
     <div className={cx('relative overflow-hidden rounded-2xl bg-[#1a1a1a] ring-1 ring-neutral-800', spotlight ? 'min-h-0' : 'aspect-video')}>
-      <StreamVideo stream={stream} muted={isSelf} mirrored={mirrored} onElement={onElement} className={camOff ? 'invisible' : ''} />
+      <StreamVideo stream={stream} muted={isSelf || audio.muted} volume={audio.volume} mirrored={mirrored} onElement={onElement} className={camOff ? 'invisible' : ''} />
+      {!isSelf && onAudioChange && <PeerAudioControl name={name} audio={audio} onChange={onAudioChange} />}
       {camOff && (
         <div className="absolute inset-0 flex items-center justify-center">
           <span className="flex size-20 items-center justify-center rounded-full bg-linear-to-br from-red-700 to-red-950 text-3xl font-bold text-white">
@@ -142,6 +211,27 @@ function ControlButton({ on, onClick, iconOn: IconOn, iconOff: IconOff, label, d
       )}
     >
       <Icon className="size-5" />
+    </button>
+  );
+}
+
+/** Liga/desliga o desfoque do fundo (ativo = destacado a azul, não vermelho: não é um "erro"). */
+function BlurButton({ on, loading, onClick, disabled }) {
+  const label = loading ? 'A preparar o desfoque...' : on ? 'Tirar o desfoque do fundo' : 'Desfocar o fundo';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || loading}
+      aria-label={label}
+      title={label}
+      aria-pressed={on}
+      className={cx(
+        'flex size-12 items-center justify-center rounded-full transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-50',
+        on ? 'bg-sky-700 text-white ring-2 ring-sky-400/60 hover:bg-sky-600' : 'bg-neutral-800 text-white hover:bg-neutral-700',
+      )}
+    >
+      {loading ? <LoaderCircle className="size-5 animate-spin" /> : <Sparkles className="size-5" />}
     </button>
   );
 }
@@ -268,7 +358,28 @@ export default function MeetingRoom({ code }) {
   const videoEls = useRef(new Map()); // id → <video>, para o gravador desenhar
   const selfVideoRef = useRef(null);
 
-  const call = useMeshCall({ code, name: name.trim(), token, localStream, enabled: stage === 'call' });
+  // ---- Desfoque do fundo ------------------------------------------------------------
+  // processed: faixa desfocada (MediaPipe) feita a partir da câmara source. Com o desfoque
+  // ligado e ainda a preparar, NÃO se envia a câmara crua (o fundo não aparece nem por 1 s).
+  const [blurOn, setBlurOn] = useState(() => Boolean(readDevices().blur));
+  const [blurLoading, setBlurLoading] = useState(false);
+  const [blurNative, setBlurNative] = useState(false);
+  const [blurError, setBlurError] = useState(null);
+  const [processed, setProcessed] = useState(null);
+  const rawVideo = localStream?.getVideoTracks()[0] ?? null;
+  const effectiveVideo = !blurOn || blurNative ? rawVideo : processed?.source === rawVideo ? processed.track : null;
+  // O que sai de mim: a câmara (ou a desfocada) + o microfone. É também a minha pré-visualização.
+  const outStream = useMemo(
+    () => (localStream ? new MediaStream([...(effectiveVideo ? [effectiveVideo] : []), ...localStream.getAudioTracks()]) : null),
+    [localStream, effectiveVideo],
+  );
+  const effectiveRef = useRef(effectiveVideo);
+  effectiveRef.current = effectiveVideo;
+
+  // Volume de cada participante (só para mim): id → { volume 0–1, muted }.
+  const [peerAudio, setPeerAudio] = useState({});
+
+  const call = useMeshCall({ code, name: name.trim(), token, localStream: outStream, enabled: stage === 'call' });
   const { phase, peers, self, recording } = call;
 
   // Dados públicos da sala (título, anfitrião) para o ecrã de entrada.
@@ -356,8 +467,8 @@ export default function MeetingRoom({ code }) {
       track.enabled = mic;
     }
     setLocalStream(new MediaStream([...keep, track]));
-    // Na chamada: os outros passam a receber a nova faixa (o ecrã partilhado continua a ser enviado).
-    if (kind === 'audio' || !screen) await call.replaceOutgoing(kind, track);
+    // Na chamada: o novo microfone segue já; o vídeo segue pelo efeito acima (com ou sem desfoque).
+    if (kind === 'audio') await call.replaceOutgoing('audio', track);
     setSwitching(false);
   };
 
@@ -366,7 +477,67 @@ export default function MeetingRoom({ code }) {
   }, [mic, localStream]);
   useEffect(() => {
     localStream?.getVideoTracks().forEach((t) => (t.enabled = cam));
-  }, [cam, localStream]);
+    if (processed) processed.track.enabled = cam;
+  }, [cam, localStream, processed]);
+
+  // Liga o desfoque na câmara atual (e refaz-o ao trocar de câmara). Nativo se houver; senão MediaPipe.
+  useEffect(() => {
+    if (!rawVideo) return undefined;
+    if (!blurOn) {
+      if (nativeBlurSupported(rawVideo)) setNativeBlur(rawVideo, false).catch(() => {});
+      setBlurNative(false);
+      return undefined;
+    }
+    let cancelled = false;
+    let created = null;
+    (async () => {
+      if (nativeBlurSupported(rawVideo)) {
+        try {
+          await setNativeBlur(rawVideo, true);
+          if (!cancelled) setBlurNative(true);
+          return;
+        } catch {
+          // o sistema anuncia mas recusa: segue para o MediaPipe
+        }
+      }
+      setBlurNative(false);
+      setBlurLoading(true);
+      try {
+        const result = await createBlurredTrack(rawVideo);
+        if (cancelled) return result.stop();
+        created = result;
+        result.track.enabled = rawVideo.enabled;
+        setProcessed({ ...result, source: rawVideo });
+      } catch (err) {
+        console.warn('Desfoque indisponível', err);
+        if (!cancelled) {
+          setBlurError('Não foi possível ativar o desfoque neste aparelho.');
+          setBlurOn(false);
+        }
+      } finally {
+        if (!cancelled) setBlurLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      created?.stop();
+      setProcessed(null);
+    };
+  }, [blurOn, rawVideo]);
+
+  const toggleBlur = () => {
+    setBlurError(null);
+    setBlurOn((on) => {
+      saveDevice('blur', !on);
+      return !on;
+    });
+  };
+
+  // Na chamada, a faixa de vídeo enviada segue a efetiva (desfoque ligado/desligado, outra
+  // câmara), exceto enquanto se partilha o ecrã.
+  useEffect(() => {
+    if (phase === 'in-call' && !screen) call.replaceOutgoing('video', effectiveVideo);
+  }, [phase, effectiveVideo, screen]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (phase === 'in-call') call.sendMedia({ mic, cam: cam || Boolean(screen), screen: Boolean(screen) });
   }, [phase, mic, cam, screen]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -412,8 +583,8 @@ export default function MeetingRoom({ code }) {
   const stopScreen = useCallback(async () => {
     screen?.stop();
     setScreen(null);
-    await call.setOutgoingVideo(localStream?.getVideoTracks()[0] ?? null);
-  }, [screen, call, localStream]);
+    await call.setOutgoingVideo(effectiveRef.current);
+  }, [screen, call]);
 
   const startScreen = async () => {
     try {
@@ -421,7 +592,7 @@ export default function MeetingRoom({ code }) {
       const track = display.getVideoTracks()[0];
       track.onended = () => {
         setScreen(null);
-        call.setOutgoingVideo(localStream?.getVideoTracks()[0] ?? null);
+        call.setOutgoingVideo(effectiveRef.current);
       };
       setScreen(track);
       await call.setOutgoingVideo(track);
@@ -457,8 +628,8 @@ export default function MeetingRoom({ code }) {
       {
         id: 'self',
         name: self?.name ?? name,
-        stream: screenStream ?? localStream,
-        camOff: !screen && (!cam || !localStream?.getVideoTracks().length),
+        stream: screenStream ?? outStream,
+        camOff: !screen && (!cam || !outStream?.getVideoTracks().length),
         micOff: !mic,
         mirrored: !screen,
         isSelf: true,
@@ -472,10 +643,12 @@ export default function MeetingRoom({ code }) {
         micOff: p.media ? !p.media.mic : false,
         state: p.state,
         screen: Boolean(p.media?.screen),
+        audio: peerAudio[p.id] ?? DEFAULT_AUDIO,
+        onAudioChange: (audio) => setPeerAudio((all) => ({ ...all, [p.id]: audio })),
       })),
     ];
     return list;
-  }, [self, name, screen, screenStream, localStream, cam, mic, peers]);
+  }, [self, name, screen, screenStream, outStream, cam, mic, peers, peerAudio]);
 
   tilesRef.current = tiles.map((t) => ({ video: t.isSelf ? selfVideoRef.current : videoEls.current.get(t.id) ?? null, name: t.name, camOff: t.camOff }));
 
@@ -533,15 +706,16 @@ export default function MeetingRoom({ code }) {
       <Shell title={info?.title}>
         <main className="mx-auto grid w-full max-w-5xl flex-1 items-center gap-8 p-4 sm:p-8 lg:grid-cols-[3fr_2fr]">
           <div className="relative aspect-video overflow-hidden rounded-2xl bg-[#1a1a1a] ring-1 ring-neutral-800">
-            <StreamVideo stream={localStream} muted mirrored className={!cam ? 'invisible' : ''} />
-            {!cam && (
+            <StreamVideo stream={outStream} muted mirrored className={!cam || !effectiveVideo ? 'invisible' : ''} />
+            {(!cam || !effectiveVideo) && (
               <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">
-                {localStream?.getVideoTracks().length ? 'Câmara desligada' : 'Sem câmara'}
+                {!localStream?.getVideoTracks().length ? 'Sem câmara' : !cam ? 'Câmara desligada' : 'A preparar o desfoque...'}
               </div>
             )}
             <div className="absolute inset-x-0 bottom-3 flex justify-center gap-3">
               <ControlButton on={mic} onClick={() => setMic((m) => !m)} iconOn={Mic} iconOff={MicOff} label={mic ? 'Desligar microfone' : 'Ligar microfone'} disabled={!localStream?.getAudioTracks().length} />
               <ControlButton on={cam} onClick={() => setCam((c) => !c)} iconOn={Video} iconOff={VideoOff} label={cam ? 'Desligar câmara' : 'Ligar câmara'} disabled={!localStream?.getVideoTracks().length} />
+              <BlurButton on={blurOn} loading={blurLoading} onClick={toggleBlur} disabled={!rawVideo} />
             </div>
           </div>
 
@@ -561,6 +735,7 @@ export default function MeetingRoom({ code }) {
               <p className="rounded-xl bg-amber-950/40 px-3 py-2 text-sm text-amber-200 ring-1 ring-amber-900/50">Não encontrámos câmara nem microfone: vai entrar só a ver e ouvir.</p>
             )}
             {mediaError === 'no-camera' && <p className="text-sm text-neutral-400">Sem câmara disponível: vai entrar só com áudio.</p>}
+            {blurError && <p className="text-sm text-amber-300">{blurError}</p>}
 
             {(localStream || deviceError) && (
               <DevicePicker devices={devices} current={currentDevices} onChange={switchDevice} busy={switching} error={deviceError} />
@@ -673,6 +848,7 @@ export default function MeetingRoom({ code }) {
         <span className="mr-auto hidden text-sm text-neutral-400 tabular-nums sm:block">{clock}</span>
         <ControlButton on={mic} onClick={() => setMic((m) => !m)} iconOn={Mic} iconOff={MicOff} label={mic ? 'Desligar microfone' : 'Ligar microfone'} disabled={!localStream?.getAudioTracks().length} />
         <ControlButton on={cam} onClick={() => setCam((c) => !c)} iconOn={Video} iconOff={VideoOff} label={cam ? 'Desligar câmara' : 'Ligar câmara'} disabled={!localStream?.getVideoTracks().length || Boolean(screen)} />
+        <BlurButton on={blurOn} loading={blurLoading} onClick={toggleBlur} disabled={!rawVideo || Boolean(screen)} />
         {localStream && (
           <ControlButton on={!showDevices} onClick={() => setShowDevices((v) => !v)} iconOn={Settings} iconOff={Settings} label="Escolher câmara e microfone" />
         )}
@@ -709,6 +885,7 @@ export default function MeetingRoom({ code }) {
         )}
       </footer>
       {recorder && <p className="pb-2 text-center text-[11px] text-neutral-500">A gravar: mantenha esta aba aberta até terminar.</p>}
+      {blurError && <p className="pb-2 text-center text-xs text-amber-300">{blurError}</p>}
     </Shell>
   );
 }

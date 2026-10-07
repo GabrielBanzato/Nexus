@@ -17,7 +17,8 @@ const MIME_TYPES = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 
 export const recordingSupported = () =>
   typeof MediaRecorder !== 'undefined' && typeof HTMLCanvasElement.prototype.captureStream === 'function' && MIME_TYPES.some((t) => MediaRecorder.isTypeSupported(t));
 
-const tickerWorker = () => {
+/** Relógio num Web Worker: continua a bater com a aba em segundo plano (também usado pelo desfoque). */
+export const tickerWorker = () => {
   const src = `let id; onmessage = (e) => { clearInterval(id); if (e.data > 0) id = setInterval(() => postMessage(0), e.data); };`;
   return new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
 };

@@ -1,35 +1,13 @@
+import { sameDayAt } from '../lib/time.js';
 import { rooms } from '../plugins/socket.js';
 import { findClientById, toWhatsAppNumber } from '../repositories/clientRepository.js';
 import { listMeetingsToRemind, meetingLink, updateMeeting } from '../repositories/meetingRepository.js';
 import { clientReminderText, greetingName, hostReminderText, sendMeetingMessage } from '../services/meetingNotifier.js';
 
+export { sameDayAt }; // usado nos testes
+
 const HOUR_MS = 60 * 60_000;
 const LOOKAHEAD_MS = 36 * HOUR_MS; // basta cobrir "amanhã de manhã"
-
-/** Partes da data no fuso `timeZone` (o servidor corre em UTC). */
-function zonedParts(date, timeZone) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(date);
-  const get = (type) => Number(parts.find((p) => p.type === type).value);
-  return { year: get('year'), month: get('month'), day: get('day'), hour: get('hour'), minute: get('minute'), second: get('second') };
-}
-
-/** Instante (UTC) em que, no fuso `timeZone`, são `hour`:00 do mesmo dia de `date`. */
-export function sameDayAt(date, hour, timeZone) {
-  const p = zonedParts(date, timeZone);
-  const guess = Date.UTC(p.year, p.month - 1, p.day, hour);
-  const q = zonedParts(new Date(guess), timeZone);
-  const offset = Date.UTC(q.year, q.month - 1, q.day, q.hour, q.minute, q.second) - guess;
-  return new Date(guess - offset);
-}
 
 /**
  * Que lembretes uma reunião deve receber AGORA. Cada um só sai uma vez (as colunas *_sent_at

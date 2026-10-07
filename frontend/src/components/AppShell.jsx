@@ -101,11 +101,30 @@ function useMeetingReminders() {
   });
 }
 
+/**
+ * Admin: o reinício diário do WhatsApp (servidor, 7h) não conseguiu religar e apagou a sessão,
+ * ou o número foi desligado no telemóvel. Avisa em qualquer página, com atalho para o QR Code.
+ */
+function useWhatsAppAlerts(enabled) {
+  const toast = useToast();
+  useSocketEvent('whatsapp:needs_qr', ({ reason }) => {
+    if (!enabled) return;
+    toast.error(
+      'WhatsApp desconectado: leia o QR Code de novo',
+      reason === 'daily_restart_failed'
+        ? 'A ligação não voltou no reinício automático da manhã. Até ler o QR, a Central não envia nem recebe mensagens.'
+        : 'O número foi desligado do WhatsApp Web. Até ler o QR, a Central não envia nem recebe mensagens.',
+      { duration: 120_000, action: { label: 'Abrir o QR Code', onClick: () => { window.location.hash = '/equipe'; } } },
+    );
+  });
+}
+
 export default function AppShell() {
   const { user, isLoading, isAdmin, logout } = useAuth();
   const [route, navigate] = useHashRoute('');
   const live = useLiveUpdates(user?.id);
   useMeetingReminders();
+  useWhatsAppAlerts(isAdmin);
 
   const groups = visibleGroups(isAdmin);
   const routes = groups.flatMap((g) => g.routes);

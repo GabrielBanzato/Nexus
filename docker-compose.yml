@@ -79,6 +79,8 @@ services:
       # WhatsApp (whatsapp-web.js): ligue e leia o QR Code no painel (admin).
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-true}
       WHATSAPP_AUTO_CREATE_CLIENTS: ${WHATSAPP_AUTO_CREATE_CLIENTS:-true}
+      # Reinício diário da ligação (hora de Brasília; "off" desliga). Não voltou → pede QR.
+      WHATSAPP_DAILY_RESTART_HOUR: ${WHATSAPP_DAILY_RESTART_HOUR:-7}
       BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-America/Sao_Paulo}
       # Hora do lembrete "hoje tem reunião" (cliente e quem conduz); o outro sai 1h antes.
       MEETING_REMINDER_HOUR: ${MEETING_REMINDER_HOUR:-8}

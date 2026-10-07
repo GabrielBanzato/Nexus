@@ -3,6 +3,8 @@ import { config } from './config/env.js';
 import { db, initDatabase, closeDatabase } from './config/database.js';
 import { createMeetingReminders } from './jobs/meetingReminders.js';
 import { createScrapeQueue } from './jobs/scrapeQueue.js';
+import { scheduleDaily } from './lib/time.js';
+import { logActivity } from './repositories/activityLogRepository.js';
 import { registerErrorHandlers } from './lib/errors.js';
 import { assertAuthConfig, authenticate, registerAuth } from './plugins/auth.js';
 import { registerMeetSignaling } from './plugins/meetSignaling.js';
@@ -92,6 +94,25 @@ export async function buildApp() {
     : null;
   app.decorate('whatsapp', whatsapp);
   app.addHook('onClose', async () => whatsapp?.stop());
+
+  // Todo dia (7h por padrão) reinicia a ligação ao WhatsApp Web: renova o Chrome (memória) e,
+  // se a sessão estiver estragada, apaga-a e pede o QR Code de novo — avisando os admins.
+  if (whatsapp && config.whatsapp.dailyRestartHour !== null) {
+    const daily = scheduleDaily({
+      hour: config.whatsapp.dailyRestartHour,
+      timeZone: config.business.timezone,
+      logger: app.log,
+      task: async () => {
+        const result = await whatsapp.restart({ readyTimeoutMs: config.whatsapp.dailyRestartTimeoutMs });
+        app.log.info({ result }, 'WhatsApp: reinício diário concluído');
+        if (result === 'reset' || result === 'qr') {
+          io.to(rooms.admins).emit('whatsapp:needs_qr', { reason: result === 'reset' ? 'daily_restart_failed' : 'logged_out' });
+          await logActivity({}, { action: 'whatsapp.daily_reset', details: { result } }).catch(() => {});
+        }
+      },
+    });
+    app.addHook('onClose', async () => daily.stop());
+  }
 
   // IA: só com AI_ENABLED=true e com o WhatsApp ligado (sugere respostas às conversas dele).
   const ollama = config.ai.enabled

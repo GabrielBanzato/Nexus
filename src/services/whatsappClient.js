@@ -256,6 +256,50 @@ export function createWhatsAppClient({ sessionDir, headless = true, onMessage, o
     },
 
     /**
+     * Reinício de manutenção (ex.: todo dia às 7h): fecha o Chrome e abre de novo com a mesma
+     * sessão (sem QR). Se em `readyTimeoutMs` não voltar a ficar conectado, a sessão está
+     * estragada: apaga-a e arranca de novo, já a mostrar um QR Code para ligar o número outra vez.
+     * Sem número ligado (a pedir QR) não faz nada: não há sessão a renovar.
+     * @returns {Promise<'ready'|'qr'|'reset'|'skipped'>}
+     */
+    async restart({ readyTimeoutMs = 3 * 60_000, pollMs = 2_000 } = {}) {
+      if (stopped || state.status === 'qr') return 'skipped';
+      logger.info({ status: state.status }, 'WhatsApp: reinício diário da ligação');
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      attempts = 0;
+      await destroyClient();
+      boot();
+
+      const deadline = Date.now() + readyTimeoutMs;
+      while (Date.now() < deadline && !stopped) {
+        if (state.status === 'ready') return 'ready';
+        // A sessão caiu sozinha (ex.: desligada no telemóvel) e já pede QR: nada a apagar.
+        if (state.status === 'qr') return 'qr';
+        await new Promise((r) => setTimeout(r, pollMs));
+      }
+      if (stopped) return 'skipped';
+      if (state.status === 'ready') return 'ready';
+
+      logger.warn({ status: state.status, error: state.error }, 'WhatsApp: não voltou depois do reinício; a apagar a sessão para ler o QR de novo');
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      attempts = 0;
+      await destroyClient();
+      try {
+        const dataPath = resolveSessionDir(sessionDir);
+        for (const entry of readdirSync(dataPath, { withFileTypes: true })) {
+          if (entry.isDirectory() && entry.name.startsWith('session')) rmSync(join(dataPath, entry.name), { recursive: true, force: true });
+        }
+      } catch (err) {
+        logger.error({ err }, 'WhatsApp: não foi possível apagar a sessão');
+      }
+      setState({ status: 'disconnected', qr: null, phone: null, error: 'A ligação não voltou no reinício diário: leia o QR Code de novo.' });
+      boot();
+      return 'reset';
+    },
+
+    /**
      * Envia um texto. Destino: `jid` da conversa, ou `number` (DDI + DDD + número, só dígitos)
      * quando o cliente nunca falou connosco — aí o WhatsApp resolve o id real da conta.
      * Se o sendMessage não lançar, a mensagem SAIU: mesmo sem id devolvido, não é erro (senão a

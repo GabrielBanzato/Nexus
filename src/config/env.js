@@ -86,5 +86,9 @@ export const config = Object.freeze({
     headless: process.env.WHATSAPP_HEADLESS !== 'false',
     // Número desconhecido: cria um cliente "lead" (true) ou ignora a mensagem (false).
     autoCreateClients: process.env.WHATSAPP_AUTO_CREATE_CLIENTS !== 'false',
+    // Reinício diário da ligação (hora no fuso da empresa; "off" desliga). Se não voltar em
+    // dailyRestartTimeoutMs, a sessão é apagada e o painel passa a pedir o QR Code.
+    dailyRestartHour: process.env.WHATSAPP_DAILY_RESTART_HOUR === 'off' ? null : Math.min(Math.max(toInt(process.env.WHATSAPP_DAILY_RESTART_HOUR, 7), 0), 23),
+    dailyRestartTimeoutMs: toInt(process.env.WHATSAPP_DAILY_RESTART_TIMEOUT_MS, 3 * 60_000),
   },
 });

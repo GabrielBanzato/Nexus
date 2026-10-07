@@ -12,6 +12,7 @@ import {
   updateClient,
 } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
+import { clearPendingChat, peekPendingChat } from '../lib/chatDraft.js';
 import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
 import { useSocketConnected, useSocketEvent } from '../lib/socket.js';
 import { useToast } from '../components/toast.jsx';
@@ -502,9 +503,10 @@ function AiSuggestionCard({ ai, onUse }) {
  * `disabled` = histórico ainda a carregar (a mensagem provisória não teria onde entrar).
  * `signature`: o número é partilhado pela equipe, por isso cada envio sai com "*Nome*" no topo.
  * `ai`: sugestão da IA (null = IA desligada no servidor).
+ * `initialText`: texto já no campo (ex.: abordagem vinda do "Chamar no WhatsApp").
  */
-function Composer({ disabled, onSend, signature, ai }) {
-  const [text, setText] = useState('');
+function Composer({ disabled, onSend, signature, ai, initialText = '' }) {
+  const [text, setText] = useState(initialText);
   const ref = useRef(null);
 
   const applySuggestion = (reply) => {
@@ -614,7 +616,7 @@ function useAiSuggestion({ clientId, enabled, lastMessageId, suggesting }) {
   };
 }
 
-function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, onBack, onOpenConnect }) {
+function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, draft, onBack, onOpenConnect }) {
   const { user, isAdmin } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -796,6 +798,7 @@ function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, 
           disabled={!messages.data}
           signature={signature}
           ai={list.length ? ai : null} // sem mensagens não há o que responder
+          initialText={draft}
           onSend={(content) => send(content)}
         />
       ) : (
@@ -827,7 +830,10 @@ export default function AttendancePage() {
   const realtime = useSocketConnected();
   const [search, setSearch] = useState('');
   const q = useDebouncedValue(search.trim());
-  const [selected, setSelected] = useState(null);
+  // "Chamar no WhatsApp" (Prospecção/Triagem): abre já essa conversa com a abordagem no campo.
+  const [initialChat] = useState(peekPendingChat);
+  useEffect(() => clearPendingChat(), []);
+  const [selected, setSelected] = useState(() => initialChat?.conversation ?? null);
   const [unread, setUnread] = useState({}); // não lidas nesta sessão, por cliente
   const [liveWaStatus, setLiveWaStatus] = useState(null);
   const [aiSuggesting, setAiSuggesting] = useState({}); // clientId → a IA está a preparar uma sugestão
@@ -926,6 +932,7 @@ export default function AttendancePage() {
             signature={meta?.signature ?? null}
             aiEnabled={Boolean(meta?.ai?.enabled)}
             aiSuggesting={Boolean(aiSuggesting[current.id])}
+            draft={current.id === initialChat?.conversation.id ? initialChat.draft : undefined}
             onBack={() => setSelected(null)}
             onOpenConnect={openConnect}
           />

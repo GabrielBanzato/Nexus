@@ -1,7 +1,8 @@
+import { publish } from '../lib/events.js';
 import { AppError, notFound } from '../lib/errors.js';
 import { isAdmin, requireRole } from '../plugins/auth.js';
 import { logActivity } from '../repositories/activityLogRepository.js';
-import { findClientById } from '../repositories/clientRepository.js';
+import { ensureClientForLead, findClientById } from '../repositories/clientRepository.js';
 import { listConversations, listMessages } from '../repositories/messageRepository.js';
 import { whatsappSignature } from '../repositories/userRepository.js';
 import { clientSummary } from '../services/whatsappInbox.js';
@@ -172,6 +173,27 @@ export default async function whatsappRoutes(app) {
       throw toHttpError(err, client);
     }
     return reply.code(201).send({ data: result.message, meta: { client: clientSummary(result.client) } });
+  });
+
+  /**
+   * "Chamar no WhatsApp" a partir de um lead (Prospecção/Triagem): devolve a conversa do lead na
+   * Central (cria o cliente se ainda não houver), para a mensagem sair pelo número da empresa,
+   * assinada, em vez de abrir o app do WhatsApp do computador. Não envia nada: a Central abre
+   * com o texto no campo para a pessoa rever e enviar.
+   * Parceiro: só leads que ele trabalha (e empresas que não são de outro parceiro).
+   */
+  app.post('/api/leads/:id/conversation', { schema: { params: idParam } }, async (request) => {
+    const user = request.currentUser;
+    const admin = isAdmin(user);
+    const { client, reason } = await ensureClientForLead(request.params.id, {
+      fallbackResponsibleId: user.id,
+      allow: ({ workerId, responsibleId }) =>
+        admin || (workerId === user.id && (responsibleId === null || responsibleId === user.id)),
+    });
+    if (reason === 'NO_PHONE') throw new AppError(422, 'NO_PHONE', 'Este lead não tem um telefone válido para WhatsApp.');
+    if (!client) throw notFound('Lead');
+    publish('clients', request); // SSE: listas de clientes abertas recarregam
+    return { data: clientSummary(client) };
   });
 
   /**

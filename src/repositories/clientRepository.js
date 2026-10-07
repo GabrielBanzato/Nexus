@@ -188,6 +188,53 @@ export async function ensureClientForDeal(deal) {
   return findClientById(clientId);
 }
 
+/**
+ * Cliente para abordar um lead da prospecção pela Central ("Chamar no WhatsApp"):
+ *  1. um cliente já ligado ao lead ou com o mesmo telefone;
+ *  2. senão, cria um cliente "lead" com os dados do lead.
+ * Responsável: quem já trabalha o lead (dono do negócio / quem o tem na triagem) ou, se
+ * ninguém, `fallbackResponsibleId`. Cliente existente sem responsável recebe esse mesmo.
+ * `allow({ workerId, responsibleId })` decide ANTES de gravar se quem pede pode abordar (privacidade).
+ * @returns {Promise<{ client: object|null, workerId: number|null, reason?: 'NOT_FOUND'|'NO_PHONE' }>}
+ */
+export async function ensureClientForLead(leadId, { fallbackResponsibleId, allow = () => true }) {
+  const lead = await db('leads as l')
+    .leftJoin('lead_triage as t', 't.lead_id', 'l.id')
+    .leftJoin('deals as d', 'd.id', 't.deal_id')
+    .where('l.id', leadId)
+    .first('l.id', 'l.nome', 'l.telefone', db.raw('COALESCE(d.owner_id, t.assigned_to) AS worker_id'));
+  if (!lead) return { client: null, workerId: null, reason: 'NOT_FOUND' };
+
+  const workerId = lead.worker_id ?? null;
+  const keys = phoneMatchKeys((lead.telefone ?? '').replace(/\D/g, ''));
+  if (!keys.length || !toWhatsAppNumber(lead.telefone)) return { client: null, workerId, reason: 'NO_PHONE' };
+
+  const existing = await db('clients')
+    .where((w) => w.where('lead_id', lead.id).orWhereIn(DIGITS('phone'), keys))
+    .orderByRaw("FIELD(status, 'active', 'lead', 'archived')")
+    .orderBy('updated_at', 'desc')
+    .first('id', 'responsible_id');
+  const responsibleId = workerId ?? fallbackResponsibleId ?? null;
+  if (!allow({ workerId, responsibleId: existing?.responsible_id ?? null })) return { client: null, workerId, reason: 'NOT_FOUND' };
+
+  if (existing) {
+    if (!existing.responsible_id && responsibleId) {
+      await db('clients').where({ id: existing.id }).whereNull('responsible_id').update({ responsible_id: responsibleId });
+    }
+    return { client: await findClientById(existing.id), workerId };
+  }
+
+  const client = await createClient({
+    name: lead.nome.slice(0, 160),
+    company: lead.nome.slice(0, 190),
+    phone: lead.telefone.slice(0, 30),
+    status: 'lead',
+    responsible_id: responsibleId,
+    lead_id: lead.id,
+  });
+  return { client, workerId };
+}
+
 function findClientByJid(jid) {
   return baseQuery().where('c.whatsapp_jid', jid).first();
 }

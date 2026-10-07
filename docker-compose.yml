@@ -77,7 +77,7 @@ services:
       # Atrás do Nginx: o IP real do usuário vem em X-Forwarded-For (rate limit do login).
       TRUST_PROXY: "true"
       # WhatsApp (whatsapp-web.js): ligue e leia o QR Code no painel (admin).
-      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-true}
       WHATSAPP_AUTO_CREATE_CLIENTS: ${WHATSAPP_AUTO_CREATE_CLIENTS:-true}
       BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-America/Sao_Paulo}
       # Agente de IA (precisa do serviço "ollama": COMPOSE_PROFILES=ai no .env).

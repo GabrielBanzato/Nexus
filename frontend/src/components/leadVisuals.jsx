@@ -1,5 +1,9 @@
-import { Globe, MessageCircle, PhoneOff, Star } from 'lucide-react';
-import { gerarLinkWhatsApp } from '../utils/whatsapp.js';
+import { useState } from 'react';
+import { Globe, Loader2, MessageCircle, PhoneOff, Star } from 'lucide-react';
+import { startLeadConversation } from '../lib/api.js';
+import { openChatWithDraft } from '../lib/chatDraft.js';
+import { gerarLinkWhatsApp, gerarMensagemWhatsApp } from '../utils/whatsapp.js';
+import { useToast } from './toast.jsx';
 import { cx } from './ui.jsx';
 
 /**
@@ -60,18 +64,37 @@ export function Rating({ rating, reviewsCount }) {
 }
 
 /**
- * Botão de abordagem via WhatsApp (link wa.me com a mensagem já montada).
+ * Botão de abordagem via WhatsApp. Abre a conversa do lead na Central de Atendimento (pelo
+ * número da empresa, com a assinatura de quem envia) com a mensagem de abordagem já escrita no
+ * campo, para rever e enviar. Só se a integração estiver desligada no servidor recorre ao
+ * link wa.me (app do WhatsApp do computador).
  *  - variant="full": botão verde de largura total ("Chamar no WhatsApp"), usado nos cards.
  *  - variant="icon": só o ícone, discreto, para linhas de tabela.
- * `onContact` (opcional) dispara no clique, inclusive botão do meio / Ctrl+clique.
+ * `onContact` (opcional) dispara no clique.
  */
 export function WhatsAppButton({ lead, variant = 'full', approached = false, onContact, className }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
   const link = gerarLinkWhatsApp(lead);
   const unavailable = lead.phone ? `Número não compatível com WhatsApp: ${lead.phone}` : 'Telefone não informado';
 
-  const handleContact = (event) => {
-    if (event.type === 'auxclick' && event.button !== 1) return;
-    onContact?.(lead);
+  const handleContact = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const conversation = await startLeadConversation(lead.id);
+      onContact?.(lead);
+      openChatWithDraft(conversation, gerarMensagemWhatsApp(lead));
+    } catch (err) {
+      if (err.body?.code === 'WHATSAPP_DISABLED') {
+        onContact?.(lead);
+        window.open(link, '_blank', 'noopener,noreferrer');
+      } else {
+        toast.error('Não foi possível abrir a conversa', err.message);
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (variant === 'icon') {
@@ -83,21 +106,19 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
       );
     }
     return (
-      <a
-        href={link}
-        target="_blank"
-        rel="noopener noreferrer"
+      <button
+        type="button"
         onClick={handleContact}
-        onAuxClick={handleContact}
-        title="Chamar no WhatsApp"
+        disabled={busy}
+        title="Chamar no WhatsApp (pela Central de Atendimento)"
         aria-label={`Chamar ${lead.name} no WhatsApp`}
         className={cx(
-          'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-emerald-500 transition hover:bg-emerald-950/50 hover:text-emerald-300 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none',
+          'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-emerald-500 transition hover:bg-emerald-950/50 hover:text-emerald-300 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60',
           className,
         )}
       >
-        <MessageCircle className="size-4" />
-      </a>
+        {busy ? <Loader2 className="size-4 animate-spin" /> : <MessageCircle className="size-4" />}
+      </button>
     );
   }
 
@@ -114,21 +135,21 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
   }
 
   return (
-    <a
-      href={link}
-      target="_blank"
-      rel="noopener noreferrer"
+    <button
+      type="button"
       onClick={handleContact}
-      onAuxClick={handleContact}
+      disabled={busy}
+      title="Abre a conversa na Central de Atendimento com a mensagem pronta para enviar"
       className={cx(
         approached
           ? 'flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-emerald-900/60 bg-emerald-950/20 px-4 text-sm font-semibold whitespace-nowrap text-emerald-400 transition hover:bg-emerald-950/50 active:scale-[0.98]'
           : 'flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold whitespace-nowrap text-white shadow-md shadow-emerald-950/50 transition hover:bg-emerald-500 active:scale-[0.98]',
+        'disabled:cursor-wait disabled:opacity-70',
         className,
       )}
     >
-      <MessageCircle className="size-4" />
+      {busy ? <Loader2 className="size-4 animate-spin" /> : <MessageCircle className="size-4" />}
       {approached ? 'Chamar novamente' : 'Chamar no WhatsApp'}
-    </a>
+    </button>
   );
 }

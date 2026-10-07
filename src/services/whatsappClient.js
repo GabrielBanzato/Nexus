@@ -64,14 +64,35 @@ export function createWhatsAppClient({ sessionDir, headless = true, onMessage, o
 
   // Envios do próprio Nexus, para o 'message_create' não os confundir com o vendedor no telemóvel.
   // O evento pode chegar ANTES de sendMessage resolver (texto em curso) ou DEPOIS (id já conhecido).
+  // O texto fica reconhecido ainda um minuto depois do envio: às vezes o WhatsApp Web não devolve
+  // o id da mensagem enviada (ver sendText) e o evento chega depois.
   const sendingBodies = new Map(); // texto → nº de envios em curso
+  const recentBodies = new Map(); // texto → expira em (ms)
   const sentIds = new Map(); // id → expira em (ms)
   const SENT_ID_TTL_MS = 5 * 60_000;
+  const RECENT_BODY_TTL_MS = 60_000;
   const isOwnSend = (msg) => {
     const now = Date.now();
     for (const [id, expires] of sentIds) if (expires < now) sentIds.delete(id);
-    return sentIds.has(msg.id?._serialized) || sendingBodies.has(msg.body);
+    for (const [body, expires] of recentBodies) if (expires < now) recentBodies.delete(body);
+    return sentIds.has(msg.id?._serialized) || sendingBodies.has(msg.body) || recentBodies.has(msg.body);
   };
+
+  /**
+   * Id da mensagem que acabámos de enviar, procurado na conversa: em conversas com contactos
+   * "@lid" o sendMessage do whatsapp-web.js (1.34.7) envia mas devolve undefined (procura a
+   * mensagem por uma chave com o id antigo do contacto). Melhor esforço: null se não achar.
+   */
+  async function findSentMessageId(chatId, text) {
+    try {
+      const chat = await client.getChatById(chatId);
+      const recent = await chat.fetchMessages({ limit: 10, fromMe: true });
+      return recent.reverse().find((m) => m.body === text)?.id?._serialized ?? null;
+    } catch (err) {
+      logger.warn({ err: err.message, chatId }, 'WhatsApp: não foi possível obter o id da mensagem enviada');
+      return null;
+    }
+  }
 
   const state = { status: 'idle', qr: null, qr_updated_at: null, phone: null, error: null, since: new Date() };
 
@@ -198,7 +219,9 @@ export function createWhatsAppClient({ sessionDir, headless = true, onMessage, o
     /**
      * Envia um texto. Destino: `jid` da conversa, ou `number` (DDI + DDD + número, só dígitos)
      * quando o cliente nunca falou connosco — aí o WhatsApp resolve o id real da conta.
-     * @returns {Promise<{ chatId: string, waMessageId: string }>}
+     * Se o sendMessage não lançar, a mensagem SAIU: mesmo sem id devolvido, não é erro (senão a
+     * Central diria "não enviada" e o "Tentar de novo" mandava-a duas vezes).
+     * @returns {Promise<{ chatId: string, waMessageId: string|null }>}
      * @throws erro com `code` WHATSAPP_NOT_READY | NOT_ON_WHATSAPP
      */
     async sendText({ jid, number }, text) {
@@ -214,9 +237,15 @@ export function createWhatsAppClient({ sessionDir, headless = true, onMessage, o
       sendingBodies.set(text, (sendingBodies.get(text) ?? 0) + 1);
       try {
         const sent = await client.sendMessage(chatId, text);
-        sentIds.set(sent.id._serialized, Date.now() + SENT_ID_TTL_MS);
-        return { chatId, waMessageId: sent.id._serialized };
+        let waMessageId = sent?.id?._serialized ?? null;
+        if (!waMessageId) {
+          waMessageId = await findSentMessageId(chatId, text);
+          logger.warn({ chatId, found: Boolean(waMessageId) }, 'WhatsApp: mensagem enviada sem id devolvido (contacto @lid)');
+        }
+        if (waMessageId) sentIds.set(waMessageId, Date.now() + SENT_ID_TTL_MS);
+        return { chatId, waMessageId };
       } finally {
+        recentBodies.set(text, Date.now() + RECENT_BODY_TTL_MS);
         const n = sendingBodies.get(text) - 1;
         if (n > 0) sendingBodies.set(text, n);
         else sendingBodies.delete(text);

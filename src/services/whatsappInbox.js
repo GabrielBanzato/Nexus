@@ -28,6 +28,38 @@ function describeContent(msg) {
   return text && msg.type !== 'location' && msg.type !== 'vcard' ? `${label}: ${text}` : label;
 }
 
+/**
+ * Telefone (só dígitos) de quem escreveu. Contas "@lid" escondem o número no jid (o
+ * "158965480575081" do @lid NÃO é telefone): pede-se o número ao WhatsApp. '' se não houver.
+ */
+async function phoneDigits(msg, contact) {
+  const jid = msg.from;
+  if (jid.endsWith('@c.us')) return jid.split('@')[0];
+  const lidUser = jid.split('@')[0];
+  try {
+    const [found] = (await msg.client.getContactLidAndPhone(jid)) ?? [];
+    const pn = found?.pn?.split('@')[0]?.replace(/\D/g, '');
+    if (pn) return pn;
+  } catch {
+    // versão do WhatsApp Web sem esta função: segue para o contacto
+  }
+  const number = (contact?.number ?? '').replace(/\D/g, '');
+  return number && number !== lidUser ? number : '';
+}
+
+/**
+ * Clientes criados antes desta correção ficaram com o id @lid como "telefone" (+158965480575081).
+ * Com o número real em mãos, corrige o telefone (e o nome, se era esse mesmo id).
+ */
+async function repairLidPhone(client, jid, digits) {
+  if (!jid.endsWith('@lid') || !digits) return client;
+  const fake = `+${jid.split('@')[0]}`;
+  if (client.phone !== fake) return client;
+  const changes = { phone: `+${digits}`.slice(0, 30), ...(client.name === fake && { name: `+${digits}` }) };
+  await db('clients').where({ id: client.id }).update(changes);
+  return { ...client, ...changes };
+}
+
 /** Dados do cliente que viajam no evento (o suficiente para a lista de conversas). */
 export const clientSummary = (client) => ({
   id: client.id,
@@ -52,10 +84,9 @@ export function createWhatsAppInbox({ io, logger, autoCreateClients, onClientMes
     if (msg.fromMe || msg.isStatus || msg.broadcast || !DIRECT_CHAT.test(msg.from)) return;
 
     const contact = await msg.getContact().catch(() => null);
-    // Em contas @lid o número real (quando visível) vem no contacto, não no jid.
-    const digits = (contact?.number || (msg.from.endsWith('@c.us') ? msg.from.split('@')[0] : '')).replace(/\D/g, '');
+    const digits = await phoneDigits(msg, contact);
 
-    const { client, created } = await findOrCreateWhatsAppClient({
+    let { client, created } = await findOrCreateWhatsAppClient({
       jid: msg.from,
       digits,
       name: contact?.pushname || contact?.name || null,
@@ -65,6 +96,7 @@ export function createWhatsAppInbox({ io, logger, autoCreateClients, onClientMes
       logger.info({ from: msg.from }, 'WhatsApp: mensagem de contacto sem cliente ignorada (WHATSAPP_AUTO_CREATE_CLIENTS=false)');
       return;
     }
+    client = await repairLidPhone(client, msg.from, digits);
 
     const message = await saveMessage({
       clientId: client.id,

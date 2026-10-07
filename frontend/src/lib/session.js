@@ -19,6 +19,12 @@ function decodePayload(token) {
   }
 }
 
+/** Dados públicos do token válido ({ sub, role, name }) ou null. Usado pela sala de vídeo (fora do login). */
+export function getTokenPayload() {
+  const token = getToken();
+  return token ? decodePayload(token) : null;
+}
+
 /** Timestamp (ms) de expiração do token, ou null se inválido. */
 export function getTokenExpiry(token) {
   const exp = decodePayload(token)?.exp;

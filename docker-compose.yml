@@ -85,6 +85,11 @@ services:
       OLLAMA_URL: http://ollama:11434
       AI_MODEL: ${AI_MODEL:-qwen3.5:2b-q4_K_M}
       AI_NUM_THREAD: ${AI_NUM_THREAD:-2}
+      # Videochamadas: link enviado ao cliente + relé TURN (serviço "coturn", perfil "meet").
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_SECRET: ${TURN_SECRET:-}
+      MEET_MAX_PARTICIPANTS: ${MEET_MAX_PARTICIPANTS:-3}
     volumes:
       # Sessão autenticada do WhatsApp: sobrevive a rebuilds/restarts (sem novo QR).
       - whatsapp_session:/app/.wwebjs_auth
@@ -122,6 +127,39 @@ services:
       interval: 15s
       timeout: 5s
       retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Relé TURN das videochamadas (só sobe com o perfil "meet": COMPOSE_PROFILES=ai,meet).
+  # O vídeo vai direto entre navegadores; o TURN só retransmite quando a rede bloqueia o P2P
+  # (≈10–20% das ligações: redes corporativas, 4G com CGNAT). Não processa vídeo: CPU/RAM ínfimos.
+  # Firewall da VPS: abrir 3478/udp, 3478/tcp e 49160-49200/udp. NÃO passa pelo Cloudflare Tunnel
+  # (o túnel só leva HTTP); TURN_URLS usa o IP da VPS ou um subdomínio "DNS only" (nuvem cinzenta).
+  coturn:
+    image: coturn/coturn:4.18.0
+    profiles: ["meet"]
+    restart: unless-stopped
+    network_mode: host # muitas portas UDP + IP real: a rede bridge do Docker atrapalharia o relé
+    environment:
+      TURN_SECRET: ${TURN_SECRET:-}
+    entrypoint: ["sh", "-c"]
+    # Testado com a 4.18.0: --no-dtls já não existe e --no-cli foi descontinuado (a CLI vem
+    # desligada por padrão). Com eles o turnserver recusa arrancar.
+    command:
+      - >-
+        [ -n "$$TURN_SECRET" ] || { echo 'Defina TURN_SECRET no .env'; exit 1; };
+        exec turnserver -n --log-file=stdout --fingerprint
+        --listening-port=3478 --min-port=49160 --max-port=49200
+        --use-auth-secret --static-auth-secret="$$TURN_SECRET" --realm=nexus
+        --no-tls --no-multicast-peers
+        --user-quota=12 --total-quota=60 --max-bps=3000000
+        --denied-peer-ip=0.0.0.0-0.255.255.255
+        --denied-peer-ip=10.0.0.0-10.255.255.255
+        --denied-peer-ip=100.64.0.0-100.127.255.255
+        --denied-peer-ip=127.0.0.0-127.255.255.255
+        --denied-peer-ip=169.254.0.0-169.254.255.255
+        --denied-peer-ip=172.16.0.0-172.31.255.255
+        --denied-peer-ip=192.168.0.0-192.168.255.255
+    mem_limit: 128m
 
   # ---------------------------------------------------------------------------
   frontend:

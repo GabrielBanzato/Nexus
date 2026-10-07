@@ -20,6 +20,12 @@ import { io } from 'socket.io-client';
  * @param {MediaStream|null} opts.localStream
  * @param {boolean} opts.enabled    false = ainda no ecrã de entrada (não liga).
  */
+/**
+ * Diagnóstico: /sala/<código>?relay=1 força TODO o tráfego pelo TURN. Se a chamada funcionar
+ * assim, o relé (coturn + TURN_URLS/TURN_SECRET) está bem configurado.
+ */
+const FORCE_RELAY = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('relay');
+
 export function useMeshCall({ code, name, token, localStream, enabled }) {
   const [phase, setPhase] = useState('idle'); // idle | connecting | waiting | in-call | full | ended | error
   const [error, setError] = useState(null);
@@ -45,7 +51,7 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
 
   const createPeer = useCallback(
     (peer, initiator) => {
-      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
+      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current, iceTransportPolicy: FORCE_RELAY ? 'relay' : 'all' });
       const stream = new MediaStream();
       const entry = { pc, stream, pending: [] };
       pcs.current.set(peer.id, entry);

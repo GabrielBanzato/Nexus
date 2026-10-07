@@ -1,14 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, Bot, Check, CircleAlert, Clock, Headset, MessagesSquare, QrCode, Search, SendHorizontal, WifiOff } from 'lucide-react';
-import { getClientMessages, listConversations, sendClientMessage, setBotStatus } from '../lib/api.js';
+import { ArrowDown, ArrowLeft, Bot, Check, CircleAlert, Clock, Headset, MessagesSquare, QrCode, Search, SendHorizontal, Video, WifiOff } from 'lucide-react';
+import { createMeeting, getClientMessages, listConversations, meetingUrl, sendClientMessage, setBotStatus } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useDebouncedValue } from '../lib/hooks.js';
 import { useSocketConnected, useSocketEvent } from '../lib/socket.js';
 import { useToast } from '../components/toast.jsx';
 import { AI_HANDOFF_REASONS } from '../lib/labels.js';
 import { WhatsAppConnectModal, WhatsAppStatusPill } from '../components/WhatsAppConnect.jsx';
-import { Avatar, Button, EmptyState, ErrorState, Spinner, cx, inputClass } from '../components/ui.jsx';
+import { Avatar, Button, ConfirmDialog, EmptyState, ErrorState, Spinner, cx, inputClass } from '../components/ui.jsx';
 
 /**
  * Central de Atendimento: conversas do WhatsApp da empresa, estilo WhatsApp Web.
@@ -209,6 +209,72 @@ function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect
 // ---------------------------------------------------------------------------
 // Conversa aberta
 // ---------------------------------------------------------------------------
+
+/**
+ * Videochamada na plataforma: cria a sala, envia o link ao cliente pelo WhatsApp (fica no
+ * histórico como mensagem da equipe) e abre a sala para quem clicou.
+ */
+function VideoCallButton({ conversation, canSend }) {
+  const toast = useToast();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const start = async () => {
+    // Abre a aba JÁ, no clique: depois de esperar pela API o navegador bloquearia o pop-up.
+    const win = window.open('', '_blank');
+    setBusy(true);
+    try {
+      const meeting = await createMeeting({ client_id: conversation.id });
+      const url = meetingUrl(meeting.code);
+      if (win) win.location.href = url;
+      else window.open(url, '_blank');
+      if (canSend) {
+        await sendClientMessage(
+          conversation.id,
+          `Olá! Vamos conversar por vídeo? É só abrir este link no celular ou no computador (não precisa instalar nada):\n${url}`,
+        );
+        toast.success('Videochamada iniciada', `Link enviado a ${conversation.name} pelo WhatsApp.`);
+      } else {
+        await navigator.clipboard?.writeText(url).catch(() => {});
+        toast.info('Sala criada: link copiado', 'O WhatsApp está desconectado: envie o link ao cliente por outro meio.');
+      }
+      setConfirming(false);
+    } catch (err) {
+      win?.close();
+      toast.error('Não foi possível iniciar a videochamada', err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        title="Videochamada na plataforma (envia o link ao cliente)"
+        aria-label="Iniciar videochamada"
+        className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-neutral-300 ring-1 ring-neutral-700 transition hover:bg-neutral-800 hover:text-white"
+      >
+        <Video className="size-4" />
+      </button>
+      <ConfirmDialog
+        open={confirming}
+        tone="primary"
+        title={`Videochamada com ${conversation.name}?`}
+        description={
+          canSend
+            ? 'Vamos criar a sala, enviar o link ao cliente pelo WhatsApp e abri-la para você numa nova aba.'
+            : 'O WhatsApp está desconectado: criamos a sala e copiamos o link para você enviar por outro meio.'
+        }
+        confirmLabel="Iniciar videochamada"
+        loading={busy}
+        onConfirm={start}
+        onClose={() => setConfirming(false)}
+      />
+    </>
+  );
+}
 
 /**
  * "Assumir atendimento" (manual override de clients.bot_active), no cabeçalho do chat.
@@ -508,6 +574,7 @@ function ChatView({ conversation, waStatus, aiTyping, onBack, onOpenConnect }) {
               .join(' · ')}
           </p>
         </div>
+        <VideoCallButton conversation={conversation} canSend={canSend} />
         <BotStatusToggle conversation={conversation} />
       </header>
 

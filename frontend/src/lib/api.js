@@ -194,6 +194,11 @@ export const getWhatsAppQr = () => request('/api/whatsapp/qr').then(unwrap);
 export const getWhatsAppStatus = () => request('/api/whatsapp/status').then(unwrap);
 export const logoutWhatsApp = () => request('/api/whatsapp/logout', { method: 'POST' }).then(unwrap);
 
+// Videochamadas (salas na plataforma)
+export const createMeeting = (body) => request('/api/meetings', json('POST', body)).then(unwrap);
+/** Link da sala a partir do endereço atual (vale em dev, no Docker e no túnel). */
+export const meetingUrl = (code) => `${window.location.origin}/sala/${code}`;
+
 // Pipeline
 export const getDealBoard = (params) => request(`/api/deals/board${qs(params)}`);
 export const createDeal = (body) => request('/api/deals', json('POST', body)).then(unwrap);

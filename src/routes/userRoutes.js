@@ -38,6 +38,8 @@ const updateSchema = {
       role: { type: 'string', enum: ROLES },
       is_active: { type: 'boolean' },
       password, // redefinição de senha pelo admin
+      // WhatsApp do membro: recebe os lembretes das reuniões que conduz.
+      phone: { type: ['string', 'null'], maxLength: 30, pattern: '^[0-9+()\\s-]*$' },
     },
   },
 };
@@ -88,7 +90,7 @@ export default async function userRoutes(app) {
       throw err;
     }
 
-    const changes = diff(before, request.body, ['name', 'email', 'role', 'is_active']);
+    const changes = diff(before, request.body, ['name', 'email', 'role', 'is_active', 'phone']);
     if (request.body.password) changes.password = 'redefinida';
     await logActivity(request, { action: 'user.update', entityType: 'user', entityId: id, details: changes });
     publish('users', request);

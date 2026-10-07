@@ -176,14 +176,18 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
     };
   }, [enabled, code, name, token, createPeer, handleSignal, closePeer, patchPeer]);
 
-  /** Troca a faixa de vídeo enviada a todos (câmara ↔ ecrã) sem renegociar. */
-  const setOutgoingVideo = useCallback(async (track) => {
-    videoTrackRef.current = track;
+  /**
+   * Troca a faixa enviada a todos sem renegociar: câmara ↔ ecrã, ou outra câmara/microfone
+   * escolhido nas configurações.
+   */
+  const replaceOutgoing = useCallback(async (kind, track) => {
+    if (kind === 'video') videoTrackRef.current = track;
     for (const { pc } of pcs.current.values()) {
-      const sender = pc.getTransceivers().find((t) => t.receiver.track?.kind === 'video')?.sender;
+      const sender = pc.getTransceivers().find((t) => t.receiver.track?.kind === kind)?.sender;
       if (sender) await sender.replaceTrack(track).catch(() => {});
     }
   }, []);
+  const setOutgoingVideo = useCallback((track) => replaceOutgoing('video', track), [replaceOutgoing]);
 
   const sendMedia = useCallback((media) => socketRef.current?.emit('meet:media', media), []);
   const setRecordingState = useCallback((on) => socketRef.current?.emit('meet:recording', { on }), []);
@@ -193,5 +197,5 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
     setPhase('left');
   }, []);
 
-  return { phase, error, self, peers: Object.values(peers).filter((p) => p.stream), recording, endedBy, setOutgoingVideo, sendMedia, setRecordingState, endForAll, leave };
+  return { phase, error, self, peers: Object.values(peers).filter((p) => p.stream), recording, endedBy, setOutgoingVideo, replaceOutgoing, sendMedia, setRecordingState, endForAll, leave };
 }

@@ -107,6 +107,7 @@ const SCHEMA = [
         password_hash  CHAR(60)      NOT NULL COMMENT 'bcrypt',
         role           ENUM('admin', 'partner', 'agent') NOT NULL DEFAULT 'agent',
         is_active      TINYINT(1)    NOT NULL DEFAULT 1,
+        phone          VARCHAR(30)   NULL COMMENT 'WhatsApp do membro (lembretes de reunião)',
         last_login_at  DATETIME      NULL,
         created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -320,6 +321,8 @@ const SCHEMA = [
         host_user_id  INT UNSIGNED  NULL COMMENT 'Quem conduz (responsável pelo negócio/cliente)',
         scheduled_at  DATETIME      NULL,
         status        ENUM('scheduled', 'live', 'ended') NOT NULL DEFAULT 'scheduled',
+        remind_day_sent_at  DATETIME NULL COMMENT 'Lembrete do dia enviado (ou dispensado)',
+        remind_hour_sent_at DATETIME NULL COMMENT 'Lembrete de 1h antes enviado (ou dispensado)',
         started_at    DATETIME      NULL,
         ended_at      DATETIME      NULL,
         created_by    INT UNSIGNED  NULL,
@@ -418,6 +421,22 @@ const COLUMN_MIGRATIONS = [
       ALTER TABLE clients
         ADD COLUMN whatsapp_jid VARCHAR(64) NULL COMMENT 'Contacto no WhatsApp (ex.: 5511999999999@c.us)' AFTER bot_active,
         ADD UNIQUE KEY uq_clients_whatsapp (whatsapp_jid)
+    `,
+  },
+  {
+    table: 'users',
+    column: 'phone',
+    name: 'users: phone (WhatsApp do membro, para lembretes)',
+    sql: `ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL COMMENT 'WhatsApp do membro (lembretes de reunião)' AFTER is_active`,
+  },
+  {
+    table: 'meetings',
+    column: 'remind_day_sent_at',
+    name: 'meetings: lembretes (dia e 1h antes)',
+    sql: `
+      ALTER TABLE meetings
+        ADD COLUMN remind_day_sent_at DATETIME NULL COMMENT 'Lembrete do dia enviado (ou dispensado)' AFTER status,
+        ADD COLUMN remind_hour_sent_at DATETIME NULL COMMENT 'Lembrete de 1h antes enviado (ou dispensado)' AFTER remind_day_sent_at
     `,
   },
 ];

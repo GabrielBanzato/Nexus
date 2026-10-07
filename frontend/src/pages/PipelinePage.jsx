@@ -5,6 +5,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import { Building2, CalendarCheck, CalendarClock, Check, Copy, Handshake, MessageCircle, Plus, Search, StickyNote, Target, Trash2, TrendingUp, Trophy, UserRound, Video } from 'lucide-react';
 import { addNote, createDeal, deleteDeal, getDealBoard, meetingUrl, moveDeal, scheduleMeeting, updateDeal } from '../lib/api.js';
+import { confirmationPreview, greetingName } from '../lib/meetingTexts.js';
 import { useAuth } from '../lib/auth.jsx';
 import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
 import {
@@ -365,17 +366,13 @@ function initialMeeting(deal) {
   return { date: toDateInput(tomorrow), time: '10:00' };
 }
 
-const previewDate = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' });
-const previewTime = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
-
 /**
  * Mesmo texto que o backend envia (services/meetingNotifier.js), para o vendedor ver antes.
  * O link da sala só existe depois de agendar: aqui aparece um marcador no lugar dele.
  */
-function confirmationPreview(deal, when) {
-  const firstName = deal.contact_name?.trim().split(/\s+/)[0];
+function meetingPreview(deal, when) {
   const link = deal.meeting_code ? meetingUrl(deal.meeting_code) : `${window.location.origin}/sala/…`;
-  return `Olá${firstName ? `, ${firstName}` : ''}! Sua reunião está confirmada para ${previewDate.format(when)} às ${previewTime.format(when)}.\n\nNo horário, é só abrir este link no celular ou no computador (não precisa instalar nada):\n${link}\n\nAté lá! 👋`;
+  return confirmationPreview({ name: greetingName({ contactName: deal.contact_name, company: deal.company }), when, link });
 }
 
 /**
@@ -446,7 +443,7 @@ function MeetingModal({ deal, rescheduling, submitting, error, onCancel, onConfi
             </span>
             {form.notify && valid && (
               <span className="mt-2 block rounded-lg rounded-tl-sm bg-emerald-950/40 px-3 py-2 text-xs leading-relaxed whitespace-pre-line break-all text-emerald-100/90 ring-1 ring-emerald-900/50">
-                {confirmationPreview(deal, when)}
+                {meetingPreview(deal, when)}
               </span>
             )}
             {form.notify && noPhone && (

@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { config } from './config/env.js';
 import { db, initDatabase, closeDatabase } from './config/database.js';
+import { createMeetingReminders } from './jobs/meetingReminders.js';
 import { createScrapeQueue } from './jobs/scrapeQueue.js';
 import { registerErrorHandlers } from './lib/errors.js';
 import { assertAuthConfig, authenticate, registerAuth } from './plugins/auth.js';
@@ -104,6 +105,17 @@ export async function buildApp() {
   }
   app.decorate('ai', { ollama, agent: aiAgent, model: config.ai.model, enabled: Boolean(aiAgent) });
 
+  // Lembretes das reuniões marcadas (no dia e 1h antes), ao cliente e a quem conduz.
+  const reminders = createMeetingReminders({
+    whatsapp,
+    io,
+    logger: app.log.child({ module: 'reminders' }),
+    timeZone: config.business.timezone,
+    reminderHour: config.business.reminderHour,
+  });
+  app.decorate('meetingReminders', reminders);
+  app.addHook('onClose', async () => reminders.stop());
+
   // Login (público) + /me, troca de senha e registo (protegidos internamente).
   await app.register(authRoutes);
   // Página da sala para o convidado (público, com limite por IP).
@@ -168,6 +180,8 @@ async function start() {
     await app.listen({ port: config.server.port, host: config.server.host });
     // Em segundo plano: o Chrome do WhatsApp leva alguns segundos e não deve atrasar a API.
     app.whatsapp?.start();
+    // Depois do banco pronto (as colunas dos lembretes vêm das migrações).
+    app.meetingReminders.start();
     // Idem para a IA: baixa o modelo na primeira vez (~1,9 GB) e deixa-o carregado na RAM.
     if (app.ai.enabled) app.ai.ollama.warmup();
   } catch (err) {

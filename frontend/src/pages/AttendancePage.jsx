@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, Bot, Check, CircleAlert, Clock, Eye, MessagesSquare, QrCode, RefreshCw, Search, SendHorizontal, Sparkles, Target, Video, WifiOff, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, Bot, CalendarClock, Check, CircleAlert, Clock, Eye, MessagesSquare, QrCode, RefreshCw, Search, SendHorizontal, Sparkles, Target, Video, WifiOff, X } from 'lucide-react';
 import {
   createMeeting,
+  endMeeting,
   getAiSuggestion,
   getClientMessages,
   listConversations,
+  listMeetings,
   meetingUrl,
   requestAiSuggestion,
   sendClientMessage,
@@ -13,11 +15,12 @@ import {
 } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { clearPendingChat, peekPendingChat } from '../lib/chatDraft.js';
+import { confirmationPreview, greetingName, instantInvitePreview } from '../lib/meetingTexts.js';
 import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
 import { useSocketConnected, useSocketEvent } from '../lib/socket.js';
 import { useToast } from '../components/toast.jsx';
 import { WhatsAppConnectModal, WhatsAppStatusPill } from '../components/WhatsAppConnect.jsx';
-import { Avatar, Button, ConfirmDialog, EmptyState, ErrorState, Spinner, cx, inputClass } from '../components/ui.jsx';
+import { Avatar, Button, ConfirmDialog, EmptyState, ErrorState, Modal, Spinner, cx, inputClass } from '../components/ui.jsx';
 
 /**
  * Central de Atendimento: conversas do WhatsApp da empresa, estilo WhatsApp Web.
@@ -338,35 +341,59 @@ function ResponsibleSelect({ conversation }) {
   );
 }
 
+const pad = (n) => String(n).padStart(2, '0');
+const toDateInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+/** Sugestão de horário: a próxima hora cheia com pelo menos 1h de folga. */
+function nextSlot() {
+  const d = new Date(Date.now() + 90 * 60_000);
+  d.setMinutes(0, 0, 0);
+  return { date: toDateInput(d), time: `${pad(d.getHours())}:00` };
+}
+const meetingWhen = new Intl.DateTimeFormat('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
 /**
- * Videochamada na plataforma: cria a sala, envia o link ao cliente pelo WhatsApp (fica no
- * histórico como mensagem da equipe) e abre a sala para quem clicou.
+ * Videochamada na plataforma, com duas opções:
+ *  - Agora: cria a sala, o servidor envia o convite ao cliente pelo WhatsApp (assinado por quem
+ *    clica) e a sala abre numa nova aba.
+ *  - Agendar: data e hora; o cliente recebe a confirmação na hora e, depois, lembretes
+ *    automáticos no dia e 1h antes (quem conduz também é lembrado).
  */
 function VideoCallButton({ conversation, canSend }) {
   const toast = useToast();
-  const [confirming, setConfirming] = useState(false);
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState('now'); // now | schedule
+  const [slot, setSlot] = useState(nextSlot);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
 
-  const start = async () => {
+  const when = slot.date && slot.time ? new Date(`${slot.date}T${slot.time}`) : null; // hora local
+  const name = greetingName({ contactName: conversation.name, company: conversation.company });
+  const placeholderLink = `${window.location.origin}/sala/…`;
+
+  const openDialog = () => {
+    setMode('now');
+    setSlot(nextSlot());
+    setError(null);
+    setOpen(true);
+  };
+
+  const startNow = async () => {
     // Abre a aba JÁ, no clique: depois de esperar pela API o navegador bloquearia o pop-up.
     const win = window.open('', '_blank');
     setBusy(true);
     try {
-      const meeting = await createMeeting({ client_id: conversation.id });
+      const { data: meeting, meta } = await createMeeting({ client_id: conversation.id, notify: canSend });
       const url = meetingUrl(meeting.code);
       if (win) win.location.href = url;
       else window.open(url, '_blank');
-      if (canSend) {
-        await sendClientMessage(
-          conversation.id,
-          `Olá! Vamos conversar por vídeo? É só abrir este link no celular ou no computador (não precisa instalar nada):\n${url}`,
-        );
-        toast.success('Videochamada iniciada', `Link enviado a ${conversation.name} pelo WhatsApp.`);
+      if (meta.notification.sent) {
+        toast.success('Videochamada iniciada', `Convite enviado a ${conversation.name} pelo WhatsApp.`);
       } else {
         await navigator.clipboard?.writeText(url).catch(() => {});
-        toast.info('Sala criada: link copiado', 'O WhatsApp está desconectado: envie o link ao cliente por outro meio.');
+        toast.info('Sala criada: link copiado', meta.notification.message ?? 'Envie o link ao cliente por outro meio.');
       }
-      setConfirming(false);
+      setOpen(false);
     } catch (err) {
       win?.close();
       toast.error('Não foi possível iniciar a videochamada', err.message);
@@ -375,32 +402,160 @@ function VideoCallButton({ conversation, canSend }) {
     }
   };
 
+  const schedule = async () => {
+    if (!when || Number.isNaN(when.getTime())) return setError('Indique a data e a hora.');
+    if (when.getTime() < Date.now()) return setError('Esse horário já passou.');
+    setBusy(true);
+    setError(null);
+    try {
+      const { data: meeting, meta } = await createMeeting({ client_id: conversation.id, scheduled_at: when.toISOString(), notify: canSend });
+      queryClient.invalidateQueries({ queryKey: ['meetings', { client_id: conversation.id }] });
+      if (meta.notification.sent) {
+        toast.success('Reunião agendada', `${conversation.name} recebeu a confirmação e vai ser lembrado no dia e 1h antes.`);
+      } else {
+        await navigator.clipboard?.writeText(meetingUrl(meeting.code)).catch(() => {});
+        toast.info('Reunião agendada: link copiado', meta.notification.message ?? 'Envie o link ao cliente por outro meio.');
+      }
+      setOpen(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const preview = mode === 'now' ? instantInvitePreview({ name, link: placeholderLink }) : when && !Number.isNaN(when.getTime()) ? confirmationPreview({ name, when, link: placeholderLink }) : null;
+
   return (
     <>
       <button
         type="button"
-        onClick={() => setConfirming(true)}
-        title="Videochamada na plataforma (envia o link ao cliente)"
-        aria-label="Iniciar videochamada"
+        onClick={openDialog}
+        title="Videochamada na plataforma: agora ou agendada"
+        aria-label="Videochamada"
         className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-neutral-300 ring-1 ring-neutral-700 transition hover:bg-neutral-800 hover:text-white"
       >
         <Video className="size-4" />
       </button>
+      <Modal
+        open={open}
+        onClose={() => !busy && setOpen(false)}
+        title={`Videochamada com ${conversation.name}`}
+        description={canSend ? 'O cliente recebe a mensagem pelo WhatsApp, assinada com o seu nome.' : 'O WhatsApp está desconectado: criamos a sala e copiamos o link para você enviar.'}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
+              Cancelar
+            </Button>
+            <Button icon={mode === 'now' ? Video : CalendarClock} loading={busy} onClick={mode === 'now' ? startNow : schedule}>
+              {mode === 'now' ? 'Começar agora' : 'Agendar reunião'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div role="radiogroup" aria-label="Quando" className="grid grid-cols-2 gap-1 rounded-xl bg-[#111111] p-1 ring-1 ring-neutral-800">
+            {[
+              { value: 'now', label: 'Agora', icon: Video },
+              { value: 'schedule', label: 'Agendar', icon: CalendarClock },
+            ].map(({ value, label, icon: Icon }) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={mode === value}
+                onClick={() => {
+                  setMode(value);
+                  setError(null);
+                }}
+                className={cx(
+                  'flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-semibold transition',
+                  mode === value ? 'bg-red-900/60 text-white ring-1 ring-red-700/40' : 'text-neutral-400 hover:text-white',
+                )}
+              >
+                <Icon className="size-4" />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {mode === 'schedule' && (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-neutral-300">Dia</span>
+                <input type="date" value={slot.date} min={toDateInput(new Date())} onChange={(e) => setSlot((s) => ({ ...s, date: e.target.value }))} className={inputClass} />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-neutral-300">Hora</span>
+                <input type="time" value={slot.time} step={300} onChange={(e) => setSlot((s) => ({ ...s, time: e.target.value }))} className={inputClass} />
+              </label>
+              <p className="col-span-2 text-xs text-neutral-500">
+                Lembretes automáticos no dia (de manhã) e 1h antes, para o cliente e para você.
+              </p>
+            </div>
+          )}
+
+          {error && <p className="rounded-xl bg-red-950/40 px-3 py-2 text-sm text-red-300">{error}</p>}
+
+          {canSend && preview && (
+            <div>
+              <p className="mb-1.5 text-xs font-medium text-neutral-400">Mensagem que o cliente vai receber</p>
+              <p className="max-h-48 overflow-y-auto rounded-xl bg-red-950/30 px-3 py-2.5 text-sm break-words whitespace-pre-wrap text-red-50 ring-1 ring-red-900/40">{preview}</p>
+            </div>
+          )}
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+/**
+ * Próxima reunião marcada com este cliente, por cima da conversa: dia/hora, entrar, copiar o
+ * link ou cancelar (a sala fecha e não há mais lembretes).
+ */
+function UpcomingMeeting({ conversation }) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const key = ['meetings', { client_id: conversation.id }];
+  const { data: meetings = [] } = useQuery({ queryKey: key, queryFn: () => listMeetings({ client_id: conversation.id }) });
+  const next = meetings.find((m) => m.scheduled_at && m.status === 'scheduled' && new Date(m.scheduled_at).getTime() > Date.now() - 60 * 60_000);
+  const cancel = useMutation({
+    mutationFn: () => endMeeting(next.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: key });
+      toast.success('Reunião cancelada', 'Os lembretes automáticos foram cancelados. Avise o cliente, se precisar.');
+    },
+    onError: (err) => toast.error('Não foi possível cancelar', err.message),
+  });
+  const [confirming, setConfirming] = useState(false);
+  if (!next) return null;
+  const url = meetingUrl(next.code);
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-neutral-800 bg-sky-950/30 px-4 py-2 text-xs text-sky-100">
+      <CalendarClock className="size-4 shrink-0 text-sky-400" />
+      <span className="min-w-0 flex-1">
+        Reunião marcada: <strong className="font-semibold">{meetingWhen.format(new Date(next.scheduled_at))}</strong>
+        {next.host_name && <span className="text-sky-300/80"> · com {next.host_name}</span>}
+      </span>
+      <a href={url} target="_blank" rel="noopener noreferrer" className="font-semibold text-sky-300 hover:text-white">Entrar</a>
+      <button type="button" onClick={() => navigator.clipboard?.writeText(url).then(() => toast.success('Link copiado'))} className="font-semibold text-sky-300 hover:text-white">
+        Copiar link
+      </button>
+      <button type="button" onClick={() => setConfirming(true)} className="font-semibold text-red-300 hover:text-red-200">
+        Cancelar
+      </button>
       <ConfirmDialog
         open={confirming}
-        tone="primary"
-        title={`Videochamada com ${conversation.name}?`}
-        description={
-          canSend
-            ? 'Vamos criar a sala, enviar o link ao cliente pelo WhatsApp e abri-la para você numa nova aba.'
-            : 'O WhatsApp está desconectado: criamos a sala e copiamos o link para você enviar por outro meio.'
-        }
-        confirmLabel="Iniciar videochamada"
-        loading={busy}
-        onConfirm={start}
+        title="Cancelar esta reunião?"
+        description="A sala fecha (o link deixa de funcionar) e ninguém recebe os lembretes. O cliente não é avisado automaticamente."
+        confirmLabel="Cancelar reunião"
+        tone="danger"
+        loading={cancel.isPending}
+        onConfirm={() => cancel.mutate(undefined, { onSettled: () => setConfirming(false) })}
         onClose={() => setConfirming(false)}
       />
-    </>
+    </div>
   );
 }
 
@@ -754,6 +909,7 @@ function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, 
         {isAdmin && <ResponsibleSelect conversation={conversation} />}
         <VideoCallButton conversation={conversation} canSend={canSend} />
       </header>
+      <UpcomingMeeting conversation={conversation} />
 
       <div className="relative min-h-0 flex-1">
         <div

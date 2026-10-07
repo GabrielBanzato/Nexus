@@ -114,7 +114,7 @@ function MemberModal({ open, member, onClose }) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const editing = Boolean(member);
-  const initial = () => ({ ...splitName(member?.name), email: member?.email ?? '', role: member?.role ?? 'partner', password: '' });
+  const initial = () => ({ ...splitName(member?.name), email: member?.email ?? '', phone: member?.phone ?? '', role: member?.role ?? 'partner', password: '' });
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState({});
   const [showPassword, setShowPassword] = useState(false);
@@ -165,13 +165,14 @@ function MemberModal({ open, member, onClose }) {
   };
 
   const save = (values) => {
-    const body = { name: joinName(values.firstName, values.lastName), email: values.email.trim() };
+    const body = { name: joinName(values.firstName, values.lastName), email: values.email.trim(), phone: values.phone.trim() || null };
     if (!editing) body.role = values.role;
     if (values.password) body.password = values.password;
     if (editing) {
       // Só o que mudou (o PATCH valida o nome só quando ele muda).
       if (body.name === member.name) delete body.name;
       if (body.email === member.email) delete body.email;
+      if (body.phone === (member.phone ?? null)) delete body.phone;
       if (!Object.keys(body).length) {
         onClose();
         return;
@@ -186,6 +187,8 @@ function MemberModal({ open, member, onClose }) {
     if (form.firstName.trim().length < 2) next.firstName = 'Indique o nome.';
     if (/\s/.test(form.firstName.trim())) next.firstName = 'Só o primeiro nome aqui; o resto vai no sobrenome.';
     if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) next.email = 'Email inválido.';
+    if (form.phone.trim() && form.phone.replace(/\D/g, '').length < 10) next.phone = 'Informe o número com DDD, ex.: (19) 99876-5432.';
+    else if (/[^0-9+()\s-]/.test(form.phone)) next.phone = 'Use só números (e + ( ) -).';
     if ((!editing || form.password) && form.password.length < 8) next.password = 'A senha deve ter pelo menos 8 caracteres.';
     setErrors(next);
     if (Object.keys(next).length) return;
@@ -254,6 +257,12 @@ function MemberModal({ open, member, onClose }) {
           <Field label="Email" required error={errors.email}>
             {({ id, invalid }) => (
               <input id={id} type="email" aria-invalid={invalid} value={form.email} onChange={set('email')} className={inputClass} placeholder="paula@empresa.com" autoComplete="off" />
+            )}
+          </Field>
+
+          <Field label="WhatsApp" error={errors.phone} hint="Opcional. Recebe aqui os lembretes das reuniões que conduzir (no dia e 1h antes).">
+            {({ id, invalid }) => (
+              <input id={id} type="tel" aria-invalid={invalid} value={form.phone} onChange={set('phone')} className={inputClass} placeholder="(19) 99876-5432" autoComplete="off" />
             )}
           </Field>
 

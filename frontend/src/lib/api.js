@@ -200,7 +200,10 @@ export const getWhatsAppStatus = () => request('/api/whatsapp/status').then(unwr
 export const logoutWhatsApp = () => request('/api/whatsapp/logout', { method: 'POST' }).then(unwrap);
 
 // Videochamadas (salas na plataforma)
-export const createMeeting = (body) => request('/api/meetings', json('POST', body)).then(unwrap);
+/** Cria a sala (agora ou com scheduled_at). Devolve { data, meta.notification } (notify: envio ao cliente). */
+export const createMeeting = (body) => request('/api/meetings', json('POST', body));
+export const listMeetings = (params) => request(`/api/meetings${qs(params)}`).then(unwrap);
+export const endMeeting = (id) => request(`/api/meetings/${id}/end`, { method: 'POST' }).then(unwrap);
 /** Link da sala a partir do endereço atual (vale em dev, no Docker e no túnel). */
 export const meetingUrl = (code) => `${window.location.origin}/sala/${code}`;
 

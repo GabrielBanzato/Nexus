@@ -80,6 +80,8 @@ services:
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-true}
       WHATSAPP_AUTO_CREATE_CLIENTS: ${WHATSAPP_AUTO_CREATE_CLIENTS:-true}
       BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-America/Sao_Paulo}
+      # Hora do lembrete "hoje tem reunião" (cliente e quem conduz); o outro sai 1h antes.
+      MEETING_REMINDER_HOUR: ${MEETING_REMINDER_HOUR:-8}
       # Agente de IA (precisa do serviço "ollama": COMPOSE_PROFILES=ai no .env).
       AI_ENABLED: ${AI_ENABLED:-false}
       OLLAMA_URL: http://ollama:11434

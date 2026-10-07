@@ -111,6 +111,12 @@ export function describeActivity(log) {
         body: d.notified ? 'Confirmação enviada ao cliente pelo WhatsApp.' : d.reason === 'SKIPPED' ? null : 'Confirmação por WhatsApp não enviada.',
         kind: 'move',
       };
+    case 'meeting.schedule':
+      return {
+        title: `agendou videochamada para ${formatMeetingAt(d.scheduled_at)}`,
+        body: d.notified ? 'Confirmação enviada ao cliente pelo WhatsApp; lembretes no dia e 1h antes.' : null,
+        kind: 'move',
+      };
     case 'client.human_takeover':
       return { title: 'assumiu o atendimento no WhatsApp (IA pausada)', kind: 'edit' };
     case 'client.bot_resumed':

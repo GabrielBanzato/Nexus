@@ -5,7 +5,7 @@ import { config } from '../config/env.js';
 export const ROLES = ['admin', 'partner', 'agent'];
 
 // Nunca selecionar password_hash fora do fluxo de login.
-const PUBLIC_COLUMNS = ['id', 'name', 'email', 'role', 'is_active', 'last_login_at', 'created_at', 'updated_at'];
+const PUBLIC_COLUMNS = ['id', 'name', 'email', 'role', 'is_active', 'phone', 'last_login_at', 'created_at', 'updated_at'];
 
 // Hash fixo usado quando o email não existe: o tempo de resposta do login fica igual
 // ao de uma senha errada, e não revela quais emails estão cadastrados.
@@ -34,23 +34,27 @@ export async function verifyPassword(userId, password) {
   return Boolean(row) && bcrypt.compare(password, row.password_hash);
 }
 
-export async function createUser({ name, email, password, role }) {
+const cleanPhone = (phone) => (phone ? String(phone).trim() || null : null);
+
+export async function createUser({ name, email, password, role, phone }) {
   const [id] = await db('users').insert({
     name: name.trim(),
     email: normalizeEmail(email),
     password_hash: await hashPassword(password),
     role,
+    phone: cleanPhone(phone),
   });
   return findUserById(id);
 }
 
-export async function updateUser(id, { name, email, role, is_active: isActive, password }) {
+export async function updateUser(id, { name, email, role, is_active: isActive, password, phone }) {
   const changes = {};
   if (name !== undefined) changes.name = name.trim();
   if (email !== undefined) changes.email = normalizeEmail(email);
   if (role !== undefined) changes.role = role;
   if (isActive !== undefined) changes.is_active = isActive;
   if (password !== undefined) changes.password_hash = await hashPassword(password);
+  if (phone !== undefined) changes.phone = cleanPhone(phone);
 
   if (Object.keys(changes).length) await db('users').where({ id }).update(changes);
   return findUserById(id);

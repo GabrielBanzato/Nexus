@@ -13,6 +13,8 @@ import { useAuth } from '../lib/auth.jsx';
 import { ROLE_META } from '../lib/labels.js';
 import { useHashRoute } from '../lib/useHashRoute.js';
 import { useLiveUpdates } from '../lib/useLiveUpdates.js';
+import { useSocketEvent } from '../lib/socket.js';
+import { useToast } from './toast.jsx';
 import { Avatar, Badge, IconButton, Spinner, cx } from './ui.jsx';
 
 /**
@@ -80,10 +82,30 @@ function visibleGroups(isAdmin) {
     .filter((g) => g.routes.length > 0);
 }
 
+const reminderTime = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+/**
+ * Lembrete de reunião (servidor: jobs/meetingReminders.js), em qualquer página do Nexus: no dia
+ * (de manhã) e 1h antes, para quem conduz. Fica 1 minuto no ecrã, com atalho para a sala.
+ */
+function useMeetingReminders() {
+  const toast = useToast();
+  useSocketEvent('meeting:reminder', ({ kind, meeting, client_notified: clientNotified }) => {
+    const time = reminderTime.format(new Date(meeting.scheduled_at));
+    const title = kind === 'day' ? `Hoje às ${time}: reunião com ${meeting.client_name}` : `Em 1 hora (${time}): reunião com ${meeting.client_name}`;
+    const message = clientNotified ? 'O cliente também recebeu o lembrete no WhatsApp.' : 'Não foi possível lembrar o cliente pelo WhatsApp.';
+    toast.info(title, message, {
+      duration: 60_000,
+      action: meeting.link ? { label: 'Abrir a sala', onClick: () => window.open(meeting.link, '_blank', 'noopener') } : undefined,
+    });
+  });
+}
+
 export default function AppShell() {
   const { user, isLoading, isAdmin, logout } = useAuth();
   const [route, navigate] = useHashRoute('');
   const live = useLiveUpdates(user?.id);
+  useMeetingReminders();
 
   const groups = visibleGroups(isAdmin);
   const routes = groups.flatMap((g) => g.routes);

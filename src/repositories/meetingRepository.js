@@ -8,8 +8,18 @@ import { config } from '../config/env.js';
  */
 export const newMeetingCode = () => randomBytes(9).toString('base64url');
 
-/** Link público da sala (para mensagens do servidor). null se PUBLIC_APP_URL não estiver definido. */
-export const meetingLink = (code) => (config.app.publicUrl ? `${config.app.publicUrl}/sala/${code}` : null);
+// Sem PUBLIC_APP_URL, o endereço do painel é aprendido do Origin de quem cria/agenda salas (a
+// equipe usa o mesmo endereço que o cliente vai abrir). Perde-se num reinício até ao próximo uso.
+let learnedOrigin = null;
+export function learnPublicOrigin(origin) {
+  if (!config.app.publicUrl && typeof origin === 'string' && /^https?:\/\/[^/\s]+$/.test(origin)) learnedOrigin = origin;
+}
+
+/** Link público da sala (para mensagens do servidor). null se o endereço público for desconhecido. */
+export const meetingLink = (code) => {
+  const base = config.app.publicUrl || learnedOrigin;
+  return base ? `${base}/sala/${code}` : null;
+};
 
 const baseQuery = () =>
   db('meetings as m')
@@ -44,7 +54,8 @@ export function updateMeeting(id, fields) {
 export async function ensureMeetingForDeal(deal, { scheduledAt, userId }) {
   const open = await db('meetings').where({ deal_id: deal.id }).whereNot('status', 'ended').orderBy('id', 'desc').first('id');
   if (open) {
-    await updateMeeting(open.id, { scheduled_at: scheduledAt });
+    // Reagendar = lembretes de novo (do dia e de 1h antes) para o novo horário.
+    await updateMeeting(open.id, { scheduled_at: scheduledAt, remind_day_sent_at: null, remind_hour_sent_at: null });
     return findMeetingById(open.id);
   }
   return createMeeting({
@@ -57,8 +68,16 @@ export async function ensureMeetingForDeal(deal, { scheduledAt, userId }) {
   });
 }
 
-/** Próximas salas e as que estão a decorrer (admin: todas; demais: as que conduzem). */
-export function listUpcomingMeetings({ hostUserId, limit = 50 } = {}) {
+/** Negócio apagado: as salas dele fecham (o link deixa de valer e não há lembretes). */
+export function endMeetingsForDeal(dealId) {
+  return db('meetings').where({ deal_id: dealId }).whereNot('status', 'ended').update({ status: 'ended', ended_at: new Date() });
+}
+
+/**
+ * Próximas salas e as que estão a decorrer (admin: todas; demais: as que conduzem).
+ * `clientId`: só as de um cliente (ex.: a próxima reunião na conversa da Central).
+ */
+export function listUpcomingMeetings({ hostUserId, clientId, limit = 50 } = {}) {
   const query = baseQuery()
     .whereNot('m.status', 'ended')
     .orderByRaw("m.status = 'live' DESC")
@@ -66,5 +85,38 @@ export function listUpcomingMeetings({ hostUserId, limit = 50 } = {}) {
     .orderBy('m.scheduled_at')
     .limit(limit);
   if (hostUserId) query.where('m.host_user_id', hostUserId);
+  if (clientId) query.where('m.client_id', clientId);
   return query;
+}
+
+/**
+ * Salas marcadas nas próximas `withinMs` com algum lembrete por enviar. Reunião de negócio só
+ * conta enquanto o negócio está em "Reunião Agendada" (moveu-se ou perdeu-se: sem lembretes).
+ * O cliente vem da sala ou, se faltar, do negócio.
+ */
+export function listMeetingsToRemind({ now, withinMs }) {
+  return db('meetings as m')
+    .leftJoin('deals as d', 'd.id', 'm.deal_id')
+    .leftJoin('users as h', 'h.id', 'm.host_user_id')
+    .whereNot('m.status', 'ended')
+    .where('m.scheduled_at', '>', now)
+    .where('m.scheduled_at', '<=', new Date(now.getTime() + withinMs))
+    .where((w) => w.whereNull('m.remind_day_sent_at').orWhereNull('m.remind_hour_sent_at'))
+    .where((w) => w.whereNull('m.deal_id').orWhere('d.stage', 'meeting'))
+    .select(
+      'm.id',
+      'm.code',
+      'm.title',
+      'm.scheduled_at',
+      'm.created_at',
+      'm.remind_day_sent_at',
+      'm.remind_hour_sent_at',
+      'm.host_user_id',
+      db.raw('COALESCE(m.client_id, d.client_id) AS client_id'),
+      'd.contact_name',
+      'd.company as deal_company',
+      'h.name as host_name',
+      'h.phone as host_phone',
+      'h.is_active as host_active',
+    );
 }

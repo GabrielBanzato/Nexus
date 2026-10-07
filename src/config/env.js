@@ -61,6 +61,8 @@ export const config = Object.freeze({
     // Fuso da empresa: datas nas mensagens aos clientes (ex.: confirmação de reunião).
     // O servidor/Docker corre em UTC; sem isto a hora sairia 3h adiantada.
     timezone: process.env.BUSINESS_TIMEZONE || 'America/Sao_Paulo',
+    // Hora (no fuso acima) do lembrete "hoje tem reunião", enviado ao cliente e a quem conduz.
+    reminderHour: Math.min(Math.max(toInt(process.env.MEETING_REMINDER_HOUR, 8), 0), 23),
   },
   ai: {
     // Assistente que SUGERE respostas na Central (nunca envia sozinho). Requer o Ollama.

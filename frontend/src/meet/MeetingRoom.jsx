@@ -9,6 +9,7 @@ import {
   MonitorUp,
   PhoneOff,
   Radar,
+  Settings,
   Square,
   Users,
   Video,
@@ -145,11 +146,36 @@ function ControlButton({ on, onClick, iconOn: IconOn, iconOff: IconOff, label, d
   );
 }
 
-/** Pede câmara + micro; sem câmara tenta só áudio; sem nada entra só a ouvir. */
+// Câmara e microfone escolhidos (deviceId), lembrados neste navegador.
+const DEVICES_KEY = 'nexus:meetDevices';
+function readDevices() {
+  try {
+    return JSON.parse(localStorage.getItem(DEVICES_KEY) ?? '{}') ?? {};
+  } catch {
+    return {};
+  }
+}
+function saveDevice(kind, deviceId) {
+  try {
+    localStorage.setItem(DEVICES_KEY, JSON.stringify({ ...readDevices(), [kind]: deviceId }));
+  } catch {
+    // storage bloqueado: só não lembra a escolha
+  }
+}
+
+const audioConstraints = (deviceId) => ({ echoCancellation: true, noiseSuppression: true, ...(deviceId && { deviceId }) });
+const videoConstraints = (deviceId) => ({ width: { ideal: 1280 }, height: { ideal: 720 }, ...(deviceId ? { deviceId } : { facingMode: 'user' }) });
+
+/**
+ * Pede câmara + micro (os últimos escolhidos, se ainda existirem); sem câmara tenta só áudio;
+ * sem nada entra só a ouvir.
+ */
 async function getLocalMedia() {
+  const saved = readDevices();
+  const audio = audioConstraints(saved.audio && { ideal: saved.audio });
   const attempts = [
-    { audio: { echoCancellation: true, noiseSuppression: true }, video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } },
-    { audio: { echoCancellation: true, noiseSuppression: true }, video: false },
+    { audio, video: videoConstraints(saved.video && { ideal: saved.video }) },
+    { audio, video: false },
   ];
   let lastError = null;
   for (const constraints of attempts) {
@@ -160,6 +186,66 @@ async function getLocalMedia() {
     }
   }
   return { stream: null, error: lastError };
+}
+
+/** Câmaras e microfones do aparelho (os nomes só aparecem depois de dada a permissão). */
+function useMediaDevices(ready) {
+  const [devices, setDevices] = useState({ audio: [], video: [] });
+  useEffect(() => {
+    const media = navigator.mediaDevices;
+    if (!ready || !media?.enumerateDevices) return undefined;
+    const load = () =>
+      media
+        .enumerateDevices()
+        .then((list) =>
+          setDevices({
+            audio: list.filter((d) => d.kind === 'audioinput' && d.deviceId),
+            video: list.filter((d) => d.kind === 'videoinput' && d.deviceId),
+          }),
+        )
+        .catch(() => {});
+    load();
+    media.addEventListener?.('devicechange', load); // ligou/desligou uma câmara ou um headset
+    return () => media.removeEventListener?.('devicechange', load);
+  }, [ready]);
+  return devices;
+}
+
+const deviceLabel = (device, index, kind) =>
+  device.label || `${kind === 'video' ? 'Câmara' : 'Microfone'} ${index + 1}`;
+
+/** Seletores de câmara e microfone (entrada e durante a chamada). */
+function DevicePicker({ devices, current, onChange, busy, error, className }) {
+  const select = 'h-10 w-full min-w-0 cursor-pointer rounded-xl border border-neutral-800 bg-[#141414] px-3 text-sm text-neutral-100 outline-none focus:border-red-700 disabled:cursor-wait disabled:opacity-60';
+  return (
+    <div className={cx('space-y-2', className)}>
+      {[
+        { kind: 'video', icon: Video, label: 'Câmara', list: devices.video },
+        { kind: 'audio', icon: Mic, label: 'Microfone', list: devices.audio },
+      ].map(({ kind, icon: Icon, label, list }) => (
+        <label key={kind} className="flex items-center gap-2">
+          <Icon className="size-4 shrink-0 text-neutral-400" aria-hidden="true" />
+          <span className="sr-only">{label}</span>
+          <select
+            aria-label={label}
+            value={current[kind] ?? ''}
+            disabled={busy || list.length === 0}
+            onChange={(e) => onChange(kind, e.target.value)}
+            className={select}
+          >
+            {list.length === 0 && <option value="">{kind === 'video' ? 'Nenhuma câmara encontrada' : 'Nenhum microfone encontrado'}</option>}
+            {!current[kind] && list.length > 0 && <option value="">Escolha {kind === 'video' ? 'a câmara' : 'o microfone'}</option>}
+            {list.map((d, i) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {deviceLabel(d, i, kind)}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
+      {error && <p className="text-xs text-amber-300">{error}</p>}
+    </div>
+  );
 }
 
 export default function MeetingRoom({ code }) {
@@ -198,12 +284,12 @@ export default function MeetingRoom({ code }) {
   }, [code]);
 
   // Câmara/micro para a pré-visualização (e para a chamada).
+  const localStreamRef = useRef(null);
+  localStreamRef.current = localStream;
   useEffect(() => {
-    let stream = null;
     let cancelled = false;
     getLocalMedia().then(({ stream: s, error }) => {
       if (cancelled) return s?.getTracks().forEach((t) => t.stop());
-      stream = s;
       setLocalStream(s);
       if (!s?.getVideoTracks().length) setCam(false);
       if (!s) setMic(false);
@@ -212,9 +298,68 @@ export default function MeetingRoom({ code }) {
     });
     return () => {
       cancelled = true;
-      stream?.getTracks().forEach((t) => t.stop());
+      localStreamRef.current?.getTracks().forEach((t) => t.stop()); // a atual (pode já ter trocado de câmara)
     };
   }, []);
+
+  // ---- Escolha de câmara e microfone ------------------------------------------------
+  const devices = useMediaDevices(Boolean(localStream));
+  const [switching, setSwitching] = useState(false);
+  const [deviceError, setDeviceError] = useState(null);
+  const [showDevices, setShowDevices] = useState(false);
+  const currentDevices = {
+    video: localStream?.getVideoTracks()[0]?.getSettings().deviceId ?? null,
+    audio: localStream?.getAudioTracks()[0]?.getSettings().deviceId ?? null,
+  };
+
+  /**
+   * Troca de câmara/microfone a qualquer momento (também a meio da chamada: replaceTrack, sem
+   * cair). Se a nova não abrir com a antiga ligada (comum em telemóveis), fecha a antiga e tenta
+   * de novo; se mesmo assim falhar, volta à anterior.
+   */
+  const switchDevice = async (kind, deviceId) => {
+    if (!deviceId) return;
+    const current = localStreamRef.current;
+    const old = kind === 'video' ? current?.getVideoTracks() ?? [] : current?.getAudioTracks() ?? [];
+    const previousId = old[0]?.getSettings().deviceId;
+    const open = (id) =>
+      navigator.mediaDevices.getUserMedia(kind === 'video' ? { video: videoConstraints({ exact: id }) } : { audio: audioConstraints({ exact: id }) });
+
+    setSwitching(true);
+    setDeviceError(null);
+    let track = null;
+    try {
+      try {
+        track = (await open(deviceId)).getTracks()[0];
+      } catch {
+        old.forEach((t) => t.stop());
+        track = (await open(deviceId)).getTracks()[0];
+      }
+      saveDevice(kind, deviceId);
+    } catch {
+      setDeviceError(`Não foi possível usar ${kind === 'video' ? 'esta câmara' : 'este microfone'}. Ela pode estar em uso noutro programa.`);
+      if (old.some((t) => t.readyState === 'ended') && previousId) {
+        track = (await open(previousId).catch(() => null))?.getTracks()[0] ?? null; // volta à anterior
+      }
+      if (!track) {
+        setSwitching(false);
+        return;
+      }
+    }
+
+    old.forEach((t) => t !== track && t.stop());
+    const keep = kind === 'video' ? current?.getAudioTracks() ?? [] : current?.getVideoTracks() ?? [];
+    if (kind === 'video') {
+      setCam(true);
+      setMediaError((e) => (e === 'no-camera' ? null : e));
+    } else {
+      track.enabled = mic;
+    }
+    setLocalStream(new MediaStream([...keep, track]));
+    // Na chamada: os outros passam a receber a nova faixa (o ecrã partilhado continua a ser enviado).
+    if (kind === 'audio' || !screen) await call.replaceOutgoing(kind, track);
+    setSwitching(false);
+  };
 
   useEffect(() => {
     localStream?.getAudioTracks().forEach((t) => (t.enabled = mic));
@@ -417,6 +562,10 @@ export default function MeetingRoom({ code }) {
             )}
             {mediaError === 'no-camera' && <p className="text-sm text-neutral-400">Sem câmara disponível: vai entrar só com áudio.</p>}
 
+            {(localStream || deviceError) && (
+              <DevicePicker devices={devices} current={currentDevices} onChange={switchDevice} busy={switching} error={deviceError} />
+            )}
+
             {waiting ? (
               <div className="flex items-center gap-3 rounded-xl bg-sky-950/40 px-4 py-3 text-sm text-sky-200 ring-1 ring-sky-900/50" role="status">
                 <LoaderCircle className="size-4 shrink-0 animate-spin" />
@@ -514,10 +663,19 @@ export default function MeetingRoom({ code }) {
         )}
       </main>
 
+      {showDevices && (
+        <div className="mx-auto mb-2 w-full max-w-sm rounded-2xl bg-[#1a1a1a] p-3 shadow-2xl ring-1 ring-neutral-800">
+          <p className="mb-2 text-xs font-semibold text-neutral-300">Câmara e microfone</p>
+          <DevicePicker devices={devices} current={currentDevices} onChange={switchDevice} busy={switching} error={deviceError} />
+        </div>
+      )}
       <footer className="flex flex-wrap items-center justify-center gap-3 border-t border-neutral-800/80 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <span className="mr-auto hidden text-sm text-neutral-400 tabular-nums sm:block">{clock}</span>
         <ControlButton on={mic} onClick={() => setMic((m) => !m)} iconOn={Mic} iconOff={MicOff} label={mic ? 'Desligar microfone' : 'Ligar microfone'} disabled={!localStream?.getAudioTracks().length} />
         <ControlButton on={cam} onClick={() => setCam((c) => !c)} iconOn={Video} iconOff={VideoOff} label={cam ? 'Desligar câmara' : 'Ligar câmara'} disabled={!localStream?.getVideoTracks().length || Boolean(screen)} />
+        {localStream && (
+          <ControlButton on={!showDevices} onClick={() => setShowDevices((v) => !v)} iconOn={Settings} iconOff={Settings} label="Escolher câmara e microfone" />
+        )}
         {/* Partilha de ecrã: não existe nos navegadores de telemóvel. */}
         {navigator.mediaDevices?.getDisplayMedia && (
           <ControlButton on={!screen} onClick={screen ? stopScreen : startScreen} iconOn={MonitorUp} iconOff={MonitorUp} label={screen ? 'Parar de partilhar o ecrã' : 'Partilhar ecrã'} />

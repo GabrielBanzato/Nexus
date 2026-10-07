@@ -14,7 +14,7 @@ import {
   scheduleMeeting,
   updateDeal,
 } from '../repositories/dealRepository.js';
-import { ensureMeetingForDeal, meetingLink } from '../repositories/meetingRepository.js';
+import { endMeetingsForDeal, ensureMeetingForDeal, learnPublicOrigin, meetingLink } from '../repositories/meetingRepository.js';
 import { sendMeetingConfirmation } from '../services/meetingNotifier.js';
 import { email, idParam, nullableId } from './schemas.js';
 
@@ -204,6 +204,7 @@ export default async function dealRoutes(app) {
     const { deal, from } = await scheduleMeeting(before.id, { meetingAt, position });
     const hadClient = Boolean(deal.client_id);
     // Sala de videochamada da plataforma: criada (ou reaproveitada ao reagendar, mantendo o link).
+    learnPublicOrigin(request.headers.origin);
     const meeting = await ensureMeetingForDeal(deal, { scheduledAt: meetingAt, userId: user.id });
     const link = meetingLink(meeting.code);
     const notification = notify
@@ -226,6 +227,7 @@ export default async function dealRoutes(app) {
   // Remover do pipeline devolve o lead de origem à fila da Triagem (ver deleteDeal).
   app.delete('/api/deals/:id', { schema: { params: idParam }, preHandler: requireRole('admin', 'partner') }, async (request, reply) => {
     const existing = await findAccessibleDeal(request.currentUser, request.params.id);
+    await endMeetingsForDeal(existing.id); // antes: a FK zera deal_id e a sala ficaria órfã (com lembretes)
     const removed = await deleteDeal(existing.id);
     await logActivity(request, {
       action: 'deal.delete',

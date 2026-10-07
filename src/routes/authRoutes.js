@@ -34,6 +34,8 @@ const registerSchema = {
       email,
       password,
       role: { type: 'string', enum: ROLES, default: 'agent' },
+      // WhatsApp do membro: recebe os lembretes das reuniões que conduz.
+      phone: { type: ['string', 'null'], maxLength: 30, pattern: '^[0-9+()\\s-]*$' },
     },
   },
 };

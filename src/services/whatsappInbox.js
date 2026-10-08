@@ -8,6 +8,13 @@ import { saveMessage } from '../repositories/messageRepository.js';
 // Grupos (@g.us), canais (@newsletter) e estados (status@broadcast) ficam fora do CRM.
 const DIRECT_CHAT = /@(c\.us|lid)$/;
 
+/**
+ * Avisos de sistema do WhatsApp que não são mensagens de ninguém: "as mensagens são protegidas
+ * com criptografia" (e2e_notification), "o código de segurança mudou", modelos de notificação,
+ * mudanças de grupo, mensagens ainda por decifrar... Antes apareciam na Central como "[e2e_notification]".
+ */
+export const SYSTEM_TYPES = new Set(['e2e_notification', 'notification', 'notification_template', 'gp2', 'protocol', 'ciphertext', 'broadcast_notification', 'debug', 'unknown', 'pinned_message']);
+
 const MEDIA_LABELS = {
   image: '📷 Imagem',
   video: '🎬 Vídeo',
@@ -18,6 +25,8 @@ const MEDIA_LABELS = {
   location: '📍 Localização',
   vcard: '👤 Contacto',
   multi_vcard: '👤 Contactos',
+  call_log: '📞 Chamada de voz/vídeo',
+  revoked: '🚫 Mensagem apagada',
 };
 
 /** Texto a guardar: a mensagem, ou uma etiqueta (+ legenda) quando é mídia. */
@@ -81,7 +90,7 @@ export const clientSummary = (client) => ({
  */
 export function createWhatsAppInbox({ io, logger, autoCreateClients, onClientMessage, push }) {
   return async function handleIncomingMessage(msg) {
-    if (msg.fromMe || msg.isStatus || msg.broadcast || !DIRECT_CHAT.test(msg.from)) return;
+    if (msg.fromMe || msg.isStatus || msg.broadcast || !DIRECT_CHAT.test(msg.from) || SYSTEM_TYPES.has(msg.type)) return;
 
     const contact = await msg.getContact().catch(() => null);
     const digits = await phoneDigits(msg, contact);
@@ -135,7 +144,7 @@ export function createWhatsAppInbox({ io, logger, autoCreateClients, onClientMes
 export function createOwnMessageHandler({ io, autoCreateClients }) {
   return async function handleOwnMessage(msg) {
     const jid = msg.to;
-    if (!DIRECT_CHAT.test(jid ?? '')) return;
+    if (!DIRECT_CHAT.test(jid ?? '') || SYSTEM_TYPES.has(msg.type)) return;
 
     const { client } = await findOrCreateWhatsAppClient({
       jid,

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Globe, Loader2, MessageCircle, PhoneOff, Star } from 'lucide-react';
 import { startLeadConversation } from '../lib/api.js';
 import { openChatWithDraft } from '../lib/chatDraft.js';
-import { gerarLinkWhatsApp, gerarMensagemWhatsApp } from '../utils/whatsapp.js';
+import { LANGUAGE_LABELS } from '../utils/country.js';
+import { gerarLinkWhatsApp, gerarMensagemWhatsApp, paisDoLead } from '../utils/whatsapp.js';
 import { useToast } from './toast.jsx';
 import { cx } from './ui.jsx';
 
@@ -76,6 +77,9 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const link = gerarLinkWhatsApp(lead);
+  // Empresa de fora: a mensagem sai no idioma do país (ex.: inglês nos EUA/Austrália).
+  const pais = paisDoLead(lead);
+  const idioma = pais.foreign ? `${pais.flag} ${pais.label}: mensagem em ${LANGUAGE_LABELS[pais.lang]}` : null;
   const unavailable = lead.phone ? `Número não compatível com WhatsApp: ${lead.phone}` : 'Telefone não informado';
 
   const handleContact = async () => {
@@ -110,7 +114,7 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
         type="button"
         onClick={handleContact}
         disabled={busy}
-        title="Chamar no WhatsApp (pela Central de Atendimento)"
+        title={`Chamar no WhatsApp (pela Central de Atendimento)${idioma ? ` · ${idioma}` : ""}`}
         aria-label={`Chamar ${lead.name} no WhatsApp`}
         className={cx(
           'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-emerald-500 transition hover:bg-emerald-950/50 hover:text-emerald-300 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60',
@@ -139,7 +143,7 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
       type="button"
       onClick={handleContact}
       disabled={busy}
-      title="Abre a conversa na Central de Atendimento com a mensagem pronta para enviar"
+      title={`Abre a conversa na Central de Atendimento com a mensagem pronta para enviar${idioma ? ` · ${idioma}` : ""}`}
       className={cx(
         approached
           ? 'flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-emerald-900/60 bg-emerald-950/20 px-4 text-sm font-semibold whitespace-nowrap text-emerald-400 transition hover:bg-emerald-950/50 active:scale-[0.98]'
@@ -150,6 +154,11 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
     >
       {busy ? <Loader2 className="size-4 animate-spin" /> : <MessageCircle className="size-4" />}
       {approached ? 'Chamar novamente' : 'Chamar no WhatsApp'}
+      {pais.foreign && (
+        <span className="rounded-md bg-black/20 px-1.5 py-0.5 text-xs font-medium" aria-label={idioma}>
+          {pais.flag} {pais.lang.toUpperCase()}
+        </span>
+      )}
     </button>
   );
 }

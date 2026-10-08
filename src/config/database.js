@@ -673,6 +673,12 @@ const POST_MIGRATIONS = [
     name: 'lead_triage: todo lead existente entra na fila',
     sql: 'INSERT IGNORE INTO lead_triage (lead_id) SELECT id FROM leads',
   },
+  {
+    // Avisos de sistema do WhatsApp gravados como mensagens antes do filtro (whatsappInbox.SYSTEM_TYPES).
+    name: 'messages: apagar avisos de sistema do WhatsApp ("[e2e_notification]" e afins)',
+    sql: `DELETE FROM messages WHERE content IN ('[e2e_notification]', '[notification]', '[notification_template]', '[gp2]', '[protocol]',
+          '[ciphertext]', '[broadcast_notification]', '[debug]', '[unknown]', '[pinned_message]')`,
+  },
 ];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

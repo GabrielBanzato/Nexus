@@ -6,7 +6,12 @@
  * A mensagem é montada a partir do grupo do lead (SEM_SITE / COM_SITE) e do segmento
  * detectado pela categoria do Google Maps (alimentação, varejo ou serviços), para que a
  * oferta faça sentido para o negócio abordado.
+ *
+ * Idioma: o do país da empresa (utils/country.js): português no Brasil/Portugal, inglês nos
+ * EUA, Austrália, Reino Unido..., espanhol na Espanha e América hispânica. O "bom dia" segue a
+ * hora LOCAL da empresa (a Austrália está ~13h à frente).
  */
+import { detectCountry, localHour } from './country.js';
 
 const REMETENTE = {
   empresa: 'Encoding',
@@ -52,9 +57,15 @@ function normalizarLead(lead) {
   };
 }
 
-/** Converte o telefone do Maps para o formato do wa.me: DDI 55 + DDD + número. */
+/**
+ * Converte o telefone do Maps para o formato do wa.me (DDI + número).
+ * Com "+" (empresas de fora: "+1 512-256-2426") já vem com o DDI: usa-se como está. Sem "+",
+ * é brasileiro: DDI 55 + DDD + número.
+ */
 export function normalizarTelefoneWhatsApp(telefone) {
-  const digitos = (telefone || '').replace(/\D/g, '');
+  const texto = String(telefone || '').trim();
+  const digitos = texto.replace(/\D/g, '');
+  if (texto.startsWith('+')) return digitos.length >= 8 && digitos.length <= 15 ? digitos : null;
   if (!digitos || digitos.startsWith('0')) return null; // 0800 / 0300 não têm WhatsApp
   if (digitos.startsWith('55') && (digitos.length === 12 || digitos.length === 13)) return digitos;
   if (digitos.length === 10 || digitos.length === 11) return `55${digitos}`;
@@ -68,6 +79,25 @@ function extrairCidade(endereco) {
   return match ? match[1].trim() : null;
 }
 
+/**
+ * Cidade em endereços de fora (Maps em pt-BR):
+ *  "301 Lavaca St, Austin, TX 78701, Estados Unidos" -> "Austin"
+ *  "Shop 2/40 York St, Sydney NSW 2000, Austrália"  -> "Sydney"
+ */
+function extrairCidadeExterior(endereco) {
+  const partes = String(endereco || '').split(',').map((p) => p.trim()).slice(0, -1); // sem o país
+  for (let i = partes.length - 1; i >= 0; i -= 1) {
+    const parte = partes[i];
+    // "TX 78701" / "ON M5V 2T6": a cidade é o pedaço anterior.
+    if (/^[A-Z]{2,3}\s+[\dA-Z]{3,}(\s?[\dA-Z]{3})?$/.test(parte)) return partes[i - 1] ?? null;
+    // "Sydney NSW 2000": a cidade vem antes do estado e do código postal.
+    const au = parte.match(/^(.+?)\s+[A-Z]{2,3}\s+\d{4}$/);
+    if (au) return au[1];
+  }
+  const candidato = partes.at(-1)?.replace(/\d+/g, '').trim();
+  return candidato && candidato.length > 1 ? candidato : null;
+}
+
 function extrairDominio(url) {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
@@ -76,16 +106,17 @@ function extrairDominio(url) {
   }
 }
 
-function saudacaoPorHorario(data = new Date()) {
-  const hora = data.getHours();
+function saudacaoPorHorario(timeZone, data = new Date()) {
+  const hora = localHour(timeZone, data);
   if (hora < 12) return 'Bom dia';
   if (hora < 18) return 'Boa tarde';
   return 'Boa noite';
 }
 
-const formatarNota = (nota) =>
-  nota.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-const formatarNumero = (n) => n.toLocaleString('pt-BR');
+const LOCALE = { pt: 'pt-BR', en: 'en-US', es: 'es-ES' };
+const formatarNota = (nota, lang = 'pt') =>
+  nota.toLocaleString(LOCALE[lang], { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const formatarNumero = (n, lang = 'pt') => n.toLocaleString(LOCALE[lang]);
 
 // ---------------------------------------------------------------------------
 // Blocos de copy
@@ -134,13 +165,13 @@ const OFERTA_COM_SITE = {
 // Templates
 // ---------------------------------------------------------------------------
 
-function templateSemSite(dados, segmento) {
+function templateSemSite(dados, segmento, pais) {
   const cidade = extrairCidade(dados.endereco);
   const nicho = dados.categoria ? dados.categoria.toLowerCase() : 'o serviço de vocês';
   const buscaExemplo = cidade ? `"${nicho} em ${cidade}"` : `"${nicho}" na região`;
 
   return [
-    `${saudacaoPorHorario()}, pessoal da *${dados.nome}*! Tudo bem?`,
+    `${saudacaoPorHorario(pais.timeZone)}, pessoal da *${dados.nome}*! Tudo bem?`,
     blocoElogio(dados),
     `Mas um ponto me preocupou: vocês ainda não têm um site próprio. Hoje, quem pesquisa ${buscaExemplo} no Google acaba clicando nos concorrentes que têm uma plataforma, e esse *tráfego orgânico (gratuito)* está indo para eles todos os dias.`,
     OFERTA_SEM_SITE[segmento],
@@ -148,11 +179,11 @@ function templateSemSite(dados, segmento) {
   ].join('\n\n');
 }
 
-function templateComSite(dados, segmento) {
+function templateComSite(dados, segmento, pais) {
   const dominio = dados.website ? extrairDominio(dados.website) : null;
 
   return [
-    `${saudacaoPorHorario()}, pessoal da *${dados.nome}*! Tudo bem?`,
+    `${saudacaoPorHorario(pais.timeZone)}, pessoal da *${dados.nome}*! Tudo bem?`,
     blocoElogio(dados),
     `Vi também que vocês já têm presença digital${dominio ? ` com o site ${dominio}` : ''}, o que coloca vocês à frente de boa parte da concorrência. 👏`,
     `Minha curiosidade é sobre o outro lado do balcão: ${DOR_COM_SITE[segmento]}`,
@@ -162,14 +193,121 @@ function templateComSite(dados, segmento) {
 }
 
 // ---------------------------------------------------------------------------
+// Inglês e espanhol (empresas de fora)
+// ---------------------------------------------------------------------------
+// A categoria do Maps vem em português (o scraper usa pt-BR): lá fora fala-se do tipo de
+// negócio pelo segmento, nunca com a palavra em português ("pizzaria", "cafeteria").
+
+const TEXTOS = {
+  en: {
+    saudacao: (hora) => (hora < 12 ? 'Good morning' : hora < 18 ? 'Good afternoon' : 'Good evening'),
+    abertura: (nome, saud) => `${saud}, *${nome}* team! Hope you're all doing well.`,
+    lugar: { alimentacao: 'places to eat', varejo: 'local stores', servicos: 'local businesses' },
+    perto: (cidade) => (cidade ? `in ${cidade}` : 'in your area'),
+    elogioTop: (nome, lugar, onde, nota, n) =>
+      `I came across ${nome} while looking for ${lugar} ${onde}, and your reputation really stood out: ${nota} stars from ${n} Google reviews. That doesn't happen by accident, so congrats on the great work!`,
+    elogioBom: (nome, lugar, onde, nota) =>
+      `I came across ${nome} while looking for ${lugar} ${onde}, and I noticed your customers rate you really well on Google (${nota} stars). Great work!`,
+    elogio: (nome, lugar, onde) => `I came across ${nome} while looking for ${lugar} ${onde} and really liked what I saw.`,
+    semSite: (onde) =>
+      `One thing caught my attention, though: you don't have your own website yet. Today, when people ${onde} search Google for what you offer, they end up clicking on competitors who do, and all that *free organic traffic* goes to them every single day.`,
+    ofertaSemSite: {
+      alimentacao:
+        'A *digital menu* with online ordering (no third-party delivery app fees) or a *website* optimized for Google would put you right in front of hungry customers at the exact moment they are searching.',
+      varejo: 'An *online store* optimized to show up on Google would let you sell 24/7, even to people who have never walked past your shop.',
+      servicos: 'A *professional website* optimized for Google, with quote requests and online booking, would turn those searches into customers reaching out to you.',
+    },
+    fechoSemSite: (empresa, nome) =>
+      `I'm with *${empresa}*, and this is exactly what we build for local businesses. Could I show you in 10 minutes what it would look like for ${nome}? No strings attached.`,
+    presenca: (dominio) => `I also saw you already have an online presence${dominio ? ` at ${dominio}` : ''}, which puts you ahead of a lot of the competition. 👏`,
+    curiosidade: (dor) => `What I'm curious about is the other side of the counter: ${dor}`,
+    dor: {
+      alimentacao:
+        'with orders coming in from the dining room, the counter, the phone and delivery all at once, are tickets, inventory and the register already integrated, or is it still handwritten notes and separate systems?',
+      varejo: 'does your in-store inventory sync with what sells online, or does the team still have to check and update everything by hand?',
+      servicos: 'are scheduling, work orders and billing all in one system, or still spread across spreadsheets, paper and messages?',
+    },
+    porque: (empresa, oferta) => `I ask because as a business grows, internal operations tend to become the bottleneck. At *${empresa}*, ${oferta}.`,
+    oferta: {
+      alimentacao: 'we set up *POS-integrated management systems*: orders, delivery, inventory and cash register in one place, with no double work and no end-of-day surprises',
+      varejo: 'we implement *ERP with POS and e-commerce integration*: inventory, sales and finances synced in real time between your store and online',
+      servicos: 'we build custom *management systems / ERP*: scheduling, work orders, billing and invoicing integrated, so your team can stop putting out fires',
+    },
+    convite: 'Would a quick 15-minute chat make sense, so I can understand how you operate?',
+  },
+  es: {
+    saudacao: (hora) => (hora < 12 ? 'Buenos días' : hora < 20 ? 'Buenas tardes' : 'Buenas noches'),
+    abertura: (nome, saud) => `${saud}, equipo de *${nome}*. ¿Cómo están?`,
+    lugar: { alimentacao: 'lugares para comer', varejo: 'tiendas', servicos: 'negocios locales' },
+    perto: (cidade) => (cidade ? `en ${cidade}` : 'en la zona'),
+    elogioTop: (nome, lugar, onde, nota, n) =>
+      `Encontré ${nome} buscando ${lugar} ${onde} y su reputación me llamó la atención: ${nota} estrellas con ${n} reseñas en Google. Eso no se construye por casualidad, ¡felicitaciones por el trabajo!`,
+    elogioBom: (nome, lugar, onde, nota) =>
+      `Encontré ${nome} buscando ${lugar} ${onde} y vi que sus clientes los califican muy bien en Google (${nota} estrellas). ¡Felicitaciones!`,
+    elogio: (nome, lugar, onde) => `Encontré ${nome} buscando ${lugar} ${onde} y me gustó mucho lo que vi del negocio.`,
+    semSite: (onde) =>
+      `Pero algo me llamó la atención: todavía no tienen sitio web propio. Hoy, quien busca en Google lo que ustedes ofrecen ${onde} termina entrando en la competencia que sí lo tiene, y ese *tráfico orgánico (gratuito)* se lo llevan ellos todos los días.`,
+    ofertaSemSite: {
+      alimentacao:
+        'Un *menú digital* con pedidos directos por WhatsApp (sin pagar comisión a aplicaciones) o un *sitio web* optimizado para Google los pondría frente a quien tiene hambre justo en ese momento.',
+      varejo: 'Una *tienda online* optimizada para aparecer en Google les permitiría vender las 24 horas, incluso a quien nunca pasó frente a la tienda física.',
+      servicos: 'Un *sitio web profesional* optimizado para Google, con botón de presupuesto y reservas por WhatsApp, convertiría esas búsquedas en clientes contactándolos.',
+    },
+    fechoSemSite: (empresa, nome) =>
+      `Soy de *${empresa}* y hacemos exactamente esto para negocios locales. ¿Les puedo mostrar en 10 minutos cómo quedaría para ${nome}, sin compromiso?`,
+    presenca: (dominio) => `Vi también que ya tienen presencia digital${dominio ? ` con el sitio ${dominio}` : ''}, lo que los pone por delante de buena parte de la competencia. 👏`,
+    curiosidade: (dor) => `Mi curiosidad es sobre el otro lado del mostrador: ${dor}`,
+    dor: {
+      alimentacao:
+        'con pedidos llegando por el salón, el mostrador, el teléfono y el delivery al mismo tiempo, ¿las comandas, el inventario y la caja ya están integrados, o todavía dependen de anotaciones a mano y sistemas separados?',
+      varejo: '¿el inventario de la tienda física se sincroniza con lo que se vende online, o el equipo todavía tiene que revisar y actualizar todo a mano?',
+      servicos: '¿la agenda, las órdenes de servicio y las finanzas ya están en un solo sistema, o siguen repartidas entre planillas, papel y WhatsApp?',
+    },
+    porque: (empresa, oferta) => `Pregunto porque, cuando el negocio crece, la operación interna suele convertirse en el cuello de botella. En *${empresa}*, ${oferta}.`,
+    oferta: {
+      alimentacao: 'implementamos *sistemas de gestión con punto de venta integrado*: comandas, delivery, inventario y caja en un solo lugar, sin retrabajo y sin sorpresas al cierre',
+      varejo: 'implementamos *ERP con integración de punto de venta y e-commerce*: inventario, ventas y finanzas sincronizados en tiempo real entre la tienda física y la online',
+      servicos: 'desarrollamos *sistemas de gestión / ERP* a medida: agenda, órdenes de servicio, finanzas y facturación integrados, para que el equipo deje de apagar incendios',
+    },
+    convite: '¿Tendría sentido una conversación rápida de 15 minutos para entender cómo operan?',
+  },
+};
+
+function templateExterior(dados, segmento, pais) {
+  const t = TEXTOS[pais.lang];
+  const cidade = extrairCidadeExterior(dados.endereco);
+  const onde = t.perto(cidade);
+  const lugar = t.lugar[segmento];
+  const { nome, nota, avaliacoes } = dados;
+  const elogio =
+    nota && nota >= 4.5 && avaliacoes >= 20
+      ? t.elogioTop(nome, lugar, onde, formatarNota(nota, pais.lang), formatarNumero(avaliacoes, pais.lang))
+      : nota && nota >= 4
+        ? t.elogioBom(nome, lugar, onde, formatarNota(nota, pais.lang))
+        : t.elogio(nome, lugar, onde);
+  const abertura = t.abertura(nome, t.saudacao(localHour(pais.timeZone)));
+
+  if (dados.grupo === 'SEM_SITE') {
+    return [abertura, elogio, t.semSite(onde), t.ofertaSemSite[segmento], t.fechoSemSite(REMETENTE.empresa, nome)].join('\n\n');
+  }
+  const dominio = dados.website ? extrairDominio(dados.website) : null;
+  return [abertura, elogio, t.presenca(dominio), t.curiosidade(t.dor[segmento]), t.porque(REMETENTE.empresa, t.oferta[segmento]), t.convite].join('\n\n');
+}
+
+// ---------------------------------------------------------------------------
 // API pública
 // ---------------------------------------------------------------------------
 
-/** Gera apenas o texto da mensagem (útil para pré-visualizar ou copiar). */
+/** País/idioma em que a mensagem de um lead sai (para mostrar no botão). */
+export const paisDoLead = (lead) => detectCountry({ address: lead.address ?? lead.endereco, phone: lead.phone ?? lead.telefone });
+
+/** Gera apenas o texto da mensagem (útil para pré-visualizar ou copiar), no idioma da empresa. */
 export function gerarMensagemWhatsApp(lead) {
   const dados = normalizarLead(lead);
   const segmento = detectarSegmento(dados.categoria);
-  return dados.grupo === 'SEM_SITE' ? templateSemSite(dados, segmento) : templateComSite(dados, segmento);
+  const pais = paisDoLead(lead);
+  if (pais.lang === 'en' || pais.lang === 'es') return templateExterior(dados, segmento, pais);
+  return dados.grupo === 'SEM_SITE' ? templateSemSite(dados, segmento, pais) : templateComSite(dados, segmento, pais);
 }
 
 /**

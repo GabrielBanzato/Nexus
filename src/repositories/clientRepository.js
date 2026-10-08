@@ -72,10 +72,13 @@ export function phoneMatchKeys(digits) {
 
 /**
  * Número no formato do WhatsApp (DDI + DDD + número) a partir de um telefone livre.
- * 10–11 dígitos = número brasileiro sem DDI → prefixa 55. Devolve null se não der.
+ * Com "+" já traz o DDI (empresas de fora no Maps: "+1 512-256-2426", "+61 2 9188 8501"): usa-se
+ * como está. Sem "+", 10–11 dígitos = número brasileiro sem DDI → prefixa 55. null se não der.
  */
 export function toWhatsAppNumber(phone) {
-  const digits = (phone ?? '').replace(/\D/g, '');
+  const text = String(phone ?? '').trim();
+  const digits = text.replace(/\D/g, '');
+  if (text.startsWith('+')) return digits.length >= 8 && digits.length <= 15 ? digits : null;
   if (!digits || digits.startsWith('0')) return null; // 0800/0300 não têm WhatsApp
   if (digits.length === 10 || digits.length === 11) return `55${digits}`;
   return digits.length >= 12 ? digits : null;

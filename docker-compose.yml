@@ -84,7 +84,7 @@ services:
       BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-America/Sao_Paulo}
       # Hora do lembrete "hoje tem reunião" (cliente e quem conduz); o outro sai 1h antes.
       MEETING_REMINDER_HOUR: ${MEETING_REMINDER_HOUR:-8}
-      # Agente de IA (precisa do serviço "ollama": COMPOSE_PROFILES=ai no .env).
+      # IA (Nex + sugestões de resposta). Só esta variável liga/desliga: o serviço "ollama" sobe sempre.
       AI_ENABLED: ${AI_ENABLED:-false}
       OLLAMA_URL: http://ollama:11434
       AI_MODEL: ${AI_MODEL:-qwen3.5:2b-q4_K_M}
@@ -104,14 +104,15 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # IA local (Qwen via Ollama, só CPU). Só sobe com o perfil "ai": COMPOSE_PROFILES=ai no .env.
+  # IA local (Qwen via Ollama, só CPU). Sobe sempre; sem AI_ENABLED=true fica parado sem modelo
+  # carregado (~50 MB), porque quem carrega o modelo é o backend. (Antes dependia do perfil "ai",
+  # que o Portainer nem sempre aplica.)
   # Dimensionado para o VPS KVM 2 (2 vCPU, 8 GB). Medido com o qwen3.5:2b-q4_K_M na CPU:
   # ~2,0 GB residentes (pico ~2,9 GB); Chrome do WhatsApp ~0,8–1,2 GB. Pior caso da stack
   # inteira (IA a gerar + scraper a correr) ≈ 6,2 GB de 8.
   # O backend baixa o modelo na primeira vez (~1,9 GB) e mantém-no carregado.
   ollama:
     image: ollama/ollama:0.35.1
-    profiles: ["ai"]
     restart: unless-stopped
     environment:
       OLLAMA_NUM_PARALLEL: "1" # 2 vCPU: gerações em paralelo só se atrasariam umas às outras
@@ -133,7 +134,7 @@ services:
       retries: 10
 
   # ---------------------------------------------------------------------------
-  # Relé TURN das videochamadas (só sobe com o perfil "meet": COMPOSE_PROFILES=ai,meet).
+  # Relé TURN das videochamadas (só sobe com o perfil "meet": COMPOSE_PROFILES=meet).
   # O vídeo vai direto entre navegadores; o TURN só retransmite quando a rede bloqueia o P2P
   # (≈10–20% das ligações: redes corporativas, 4G com CGNAT). Não processa vídeo: CPU/RAM ínfimos.
   # Firewall da VPS: abrir 3478/udp, 3478/tcp e 49160-49200/udp. NÃO passa pelo Cloudflare Tunnel

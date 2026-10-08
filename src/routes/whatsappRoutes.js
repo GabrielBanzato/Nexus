@@ -100,6 +100,14 @@ export default async function whatsappRoutes(app) {
     return { data: { ...state, has_qr: Boolean(qr), enabled: true } };
   });
 
+  // "Reconectar": sessão nova do zero (apaga a atual) e QR Code novo, em qualquer estado —
+  // a saída para quando fica preso a sincronizar, com erro, ou para trocar de número.
+  app.post('/api/whatsapp/reset', sessionOnly, async (request) => {
+    await requireService().resetSession();
+    await logActivity(request, { action: 'whatsapp.reset' });
+    return { data: requireService().getState() };
+  });
+
   // Desliga o número atual (ex.: trocar de telemóvel). Em seguida é gerado um QR novo.
   app.post('/api/whatsapp/logout', sessionOnly, async (request) => {
     const done = await requireService().logout();

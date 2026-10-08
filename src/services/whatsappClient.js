@@ -409,6 +409,34 @@ export function createWhatsAppClient({
       }
     },
 
+    /**
+     * "Reconectar" (botão do admin): fecha o navegador, apaga a sessão guardada e arranca de
+     * novo, já a mostrar um QR Code. Funciona em qualquer estado — inclusive preso a sincronizar,
+     * com erro, ou ligado (aí tenta antes terminar a sessão no WhatsApp, para o aparelho sair da
+     * lista "Aparelhos conectados" do telemóvel).
+     */
+    async resetSession() {
+      const current = client;
+      client = null; // eventos deste cliente passam a ser ignorados (live())
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      clearTimeout(readyWatch);
+      readyWatch = null;
+      attempts = 0;
+      stuckRestarts = 0;
+      if (current && state.status === 'ready') {
+        // Com limite: um WhatsApp Web encravado não pode prender o botão.
+        await Promise.race([current.logout().catch(() => {}), new Promise((r) => setTimeout(r, 8_000))]);
+      }
+      await current?.destroy().catch(() => {});
+      wipeSession();
+      logger.info('WhatsApp: sessão reiniciada pelo admin (novo QR Code)');
+      setState({ status: 'disconnected', qr: null, phone: null, error: null });
+      stopped = false;
+      boot();
+      return true;
+    },
+
     /** Desliga o número ligado (apaga a sessão) e arranca de novo, já a mostrar um QR novo. */
     async logout() {
       if (!client || state.status !== 'ready') return false;

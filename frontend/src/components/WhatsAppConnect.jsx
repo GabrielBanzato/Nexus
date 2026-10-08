@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CircleAlert, LoaderCircle, LogOut, QrCode, Smartphone, WifiOff } from 'lucide-react';
-import { getWhatsAppQr, getWhatsAppStatus, logoutWhatsApp } from '../lib/api.js';
+import { CircleAlert, LoaderCircle, LogOut, QrCode, RefreshCw, Smartphone, WifiOff } from 'lucide-react';
+import { getWhatsAppQr, getWhatsAppStatus, logoutWhatsApp, resetWhatsApp } from '../lib/api.js';
 import { formatRelative } from '../lib/labels.js';
 import { useSocketEvent } from '../lib/socket.js';
 import { useToast } from './toast.jsx';
@@ -96,6 +96,19 @@ export function WhatsAppConnectModal({ open, onClose }) {
   const queryClient = useQueryClient();
   const { status, state, qr, isLoading, error } = useWhatsAppAdminState({ enabled: open });
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  // "Reconectar": sessão nova do zero e QR Code novo (saída para "a sincronizar" eterno, erros...).
+  const reset = useMutation({
+    mutationFn: resetWhatsApp,
+    onSuccess: (next) => {
+      queryClient.setQueryData(STATUS_KEY, (old) => ({ ...old, ...next, has_qr: false }));
+      setConfirmReset(false);
+      toast.success('A reconectar', 'O QR Code novo aparece em alguns segundos. Leia-o com o celular.');
+    },
+    onError: (err) => toast.error('Não foi possível reconectar', err.message),
+  });
+  const canReset = status && !['ready', 'qr', 'disabled'].includes(status);
 
   const logout = useMutation({
     mutationFn: logoutWhatsApp,
@@ -160,13 +173,16 @@ export function WhatsAppConnectModal({ open, onClose }) {
     body = (
       <CenteredState icon={LoaderCircle} tone="sky" spin title={status === 'authenticated' ? 'QR lido! A sincronizar as conversas...' : 'A iniciar o WhatsApp...'}>
         {status === 'initializing' && 'O navegador do servidor está a abrir o WhatsApp Web; o QR Code aparece em alguns segundos.'}
+        {status === 'authenticated' && 'Pode levar alguns minutos com muitas conversas. Se ficar parado aqui, use Reconectar para gerar um QR Code novo.'}
       </CenteredState>
     );
   } else {
     body = (
       <CenteredState icon={CircleAlert} tone="amber" title={WHATSAPP_STATUS_META[status]?.label ?? 'WhatsApp indisponível'}>
         {state?.error && <p className="break-words">{state.error}</p>}
-        {!String(state?.error ?? '').startsWith('Pasta da sessão') && <p className="mt-1">O servidor está a tentar religar automaticamente.</p>}
+        {!String(state?.error ?? '').startsWith('Pasta da sessão') && (
+          <p className="mt-1">O servidor está a tentar religar automaticamente. Se não voltar, use <strong className="text-neutral-200">Reconectar</strong> para gerar um QR Code novo.</p>
+        )}
       </CenteredState>
     );
   }
@@ -186,6 +202,11 @@ export function WhatsAppConnectModal({ open, onClose }) {
         description="Ligue o número que a equipe usa para atender os clientes."
         footer={
           <>
+            {canReset && (
+              <Button variant="secondary" icon={RefreshCw} onClick={() => setConfirmReset(true)} className="mr-auto">
+                Reconectar (novo QR Code)
+              </Button>
+            )}
             {status === 'ready' && (
               <Button variant="danger" icon={LogOut} onClick={() => setConfirmLogout(true)} className="mr-auto">
                 Desconectar número
@@ -200,6 +221,17 @@ export function WhatsAppConnectModal({ open, onClose }) {
         </div>
         {body}
       </Modal>
+
+      <ConfirmDialog
+        open={confirmReset}
+        title="Reconectar o WhatsApp?"
+        description="A sessão atual é apagada e aparece um QR Code novo. Leia-o com o celular do número (Aparelhos conectados → Conectar um aparelho). As conversas já guardadas no Nexus não se perdem."
+        confirmLabel="Reconectar"
+        tone="primary"
+        loading={reset.isPending}
+        onConfirm={() => reset.mutate()}
+        onClose={() => setConfirmReset(false)}
+      />
 
       <ConfirmDialog
         open={confirmLogout}

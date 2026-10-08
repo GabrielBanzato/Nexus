@@ -198,6 +198,8 @@ export const requestAiSuggestion = (clientId) => request(`/api/clients/${clientI
 export const getWhatsAppQr = () => request('/api/whatsapp/qr').then(unwrap);
 export const getWhatsAppStatus = () => request('/api/whatsapp/status').then(unwrap);
 export const logoutWhatsApp = () => request('/api/whatsapp/logout', { method: 'POST' }).then(unwrap);
+/** Reconectar: apaga a sessão atual (qualquer estado) e gera um QR Code novo. */
+export const resetWhatsApp = () => request('/api/whatsapp/reset', { method: 'POST' }).then(unwrap);
 
 // Videochamadas (salas na plataforma)
 /** Cria a sala (agora ou com scheduled_at). Devolve { data, meta.notification } (notify: envio ao cliente). */

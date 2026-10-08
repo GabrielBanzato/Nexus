@@ -5,48 +5,74 @@ import { useAuth } from '../lib/auth.jsx';
 import { GOAL_METRICS, GOAL_SCOPES, formatGoalValue, formatPeriod, goalTimeLabel } from '../lib/goals.js';
 import { Avatar, Badge, Card, EmptyState, ErrorState, PageHeader, Spinner, cx } from '../components/ui.jsx';
 
-const FLOORS = [1, 0.75, 0.5, 0.25, 0];
-const clamp = (n) => Math.min(Math.max(n, 0), 1);
+const GRID = [1, 0.75, 0.5, 0.25];
 const firstName = (name) => name.split(' ')[0];
 const percent = (p) => `${Math.round(p * 100)}%`;
 
 /**
- * O prédio: a meta é o terraço, cada andar é 25% do caminho. Cada pessoa (ou o grupo) está no
- * andar a que já chegou. Visto de cima para baixo: quem está mais alto está mais perto da meta.
+ * Teto relativo: quem está mais alto fica no máximo a 60% da altura do prédio, por mais que
+ * venda — o topo nunca é alcançado (sensação de "ainda não cheguei"). O topo do gráfico vale o
+ * maior entre a BASE (a meta) e o nível mais alto ÷ 0,6; quem passa da BASE vê a linha dela
+ * ficar abaixo de si e o prédio "crescer".
  */
-// Altura (% a contar de baixo) de cada fração da meta: folga em cima para o avatar no terraço e em
-// baixo para o nome de quem ainda está no térreo.
+const MAX_REACH = 0.6;
+// Topo arredondado para cima a um número "redondo" (1; 1,2; 1,5; 2; 2,5; 3; 4; 5; 6; 8 × 10ⁿ): as linhas de 1/4 caem
+// em valores limpos (R$ 5 mil, 10 mil...) em vez de R$ 5.208, e quem lidera fica perto dos 60%.
+const NICE = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+const niceCeil = (n) => {
+  const power = 10 ** Math.floor(Math.log10(n));
+  return NICE.find((step) => step * power >= n) * power;
+};
+function buildingScale(target, values) {
+  const needed = Math.max(0, ...values) / MAX_REACH;
+  return needed > target ? niceCeil(needed) : target;
+}
+
+// Altura (% a contar de baixo) de uma fração do topo: folga em cima e em baixo para o nome de
+// quem ainda está no térreo.
 const level = (f) => 12 + f * 76;
 
+/**
+ * O prédio: cada pessoa (ou o grupo) na altura do que já fez; a linha BASE é a meta.
+ * Visto de cima para baixo: quem está mais alto está mais perto (ou já passou) da BASE.
+ */
 function Building({ goal, viewerId }) {
   const group = goal.scope === 'group';
   // Grupo: um só "elevador" com o total. Individual: cada pessoa na sua altura.
   const climbers = group
-    ? [{ key: 'group', label: 'Equipe', pct: goal.total_pct, reached: goal.reached, group: true }]
-    : goal.members.map((m) => ({ key: m.user_id, label: firstName(m.name), name: m.name, id: m.user_id, pct: m.pct, reached: m.reached, me: m.user_id === viewerId }));
+    ? [{ key: 'group', label: 'Equipe', value: goal.total, pct: goal.total_pct, reached: goal.reached, group: true }]
+    : goal.members.map((m) => ({ key: m.user_id, label: firstName(m.name), name: m.name, id: m.user_id, value: m.value, pct: m.pct, reached: m.reached, me: m.user_id === viewerId }));
   const lanes = Math.max(climbers.length, 1);
+  const top = buildingScale(goal.target, climbers.map((c) => c.value));
+  const base = goal.target / top; // fração da altura onde fica a linha BASE (1 = no topo)
+  // Linhas de grelha com o valor; some a que ficaria colada à BASE (os rótulos não se sobrepõem).
+  const grid = GRID.filter((f) => Math.abs(f - base) > 0.09);
 
   return (
     <div className="relative flex h-80 select-none">
-      {/* Andares */}
+      {/* Escala */}
       <div className="relative w-16 shrink-0 sm:w-20">
-        {FLOORS.map((f) => (
-          <span key={f} className="absolute right-2 translate-y-1/2 text-right text-[10px] leading-tight text-neutral-500 tabular-nums" style={{ bottom: `${level(f)}%` }}>
-            {f === 1 ? <span className="font-semibold text-amber-300">BASE</span> : f === 0 ? 'térreo' : percent(f)}
-            {f > 0 && f < 1 && <span className="block text-neutral-600">{formatGoalValue(goal.metric, goal.target * f, { compact: true })}</span>}
+        {grid.map((f) => (
+          <span key={f} className="absolute right-2 translate-y-1/2 text-right text-[10px] leading-tight text-neutral-600 tabular-nums" style={{ bottom: `${level(f)}%` }}>
+            {formatGoalValue(goal.metric, top * f, { compact: true })}
           </span>
         ))}
+        <span className="absolute right-2 translate-y-1/2 text-right text-[10px] leading-tight tabular-nums" style={{ bottom: `${level(base)}%` }}>
+          <span className="block font-semibold text-amber-300">BASE</span>
+          <span className="block text-amber-300/60">{formatGoalValue(goal.metric, goal.target, { compact: true })}</span>
+        </span>
+        <span className="absolute right-2 translate-y-1/2 text-[10px] text-neutral-500" style={{ bottom: `${level(0)}%` }}>
+          térreo
+        </span>
       </div>
       <div className="relative flex-1 rounded-xl border border-neutral-800 bg-[linear-gradient(to_bottom,rgba(245,158,11,0.10),transparent_30%)]">
-        {FLOORS.map((f) => (
-          <span
-            key={f}
-            className={cx('absolute inset-x-0 border-t', f === 1 ? 'border-amber-500/60' : f === 0 ? 'border-neutral-700' : 'border-dashed border-neutral-800')}
-            style={{ bottom: `${level(f)}%` }}
-          />
+        {grid.map((f) => (
+          <span key={f} className="absolute inset-x-0 border-t border-dashed border-neutral-800" style={{ bottom: `${level(f)}%` }} />
         ))}
+        <span className="absolute inset-x-0 border-t border-neutral-700" style={{ bottom: `${level(0)}%` }} />
+        <span className="absolute inset-x-0 border-t border-amber-500/60 transition-all duration-700" style={{ bottom: `${level(base)}%` }} />
         {climbers.map((c, i) => {
-          const at = level(clamp(c.pct));
+          const at = level(Math.max(c.value, 0) / top);
           const left = `${((i + 0.5) / lanes) * 100}%`;
           return (
             <div key={c.key} className="absolute inset-y-0 -translate-x-1/2" style={{ left }}>
@@ -150,7 +176,7 @@ function GoalCard({ goal, viewerId }) {
               <p className="text-xs text-neutral-500">{group ? 'A equipe já fez' : 'Você já fez'}</p>
               <p className="text-2xl font-bold text-white tabular-nums">{formatGoalValue(goal.metric, progress)}</p>
               <p className={cx('text-xs', remaining > 0 ? 'text-neutral-400' : 'text-emerald-400')}>
-                {remaining > 0 ? `Faltam ${formatGoalValue(goal.metric, remaining)} para o terraço` : 'Meta batida! 🏆'}
+                {remaining > 0 ? `Faltam ${formatGoalValue(goal.metric, remaining)} para a BASE` : 'BASE batida! 🏆'}
               </p>
             </div>
           )}
@@ -172,7 +198,7 @@ export default function FloorPage() {
     <div className="space-y-5">
       <PageHeader
         title="Piso"
-        description="As metas vistas de cima: o terraço é a meta, cada andar é um quarto do caminho. Atualiza sozinho com cada venda e reunião."
+        description="As metas vistas de cima: a linha BASE é a meta e o prédio cresce com quem vende mais. Atualiza sozinho com cada venda e reunião."
       />
       {isError ? (
         <ErrorState error={error} onRetry={refetch} />

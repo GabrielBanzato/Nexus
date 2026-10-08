@@ -12,6 +12,7 @@ import { registerSocket, rooms } from './plugins/socket.js';
 import { ensureBootstrapAdmin } from './repositories/userRepository.js';
 import { fixForeignPhones } from './repositories/leadRepository.js';
 import { createAiAgent } from './services/aiAgent.js';
+import { createNexReviewer } from './services/nexReviewer.js';
 import { createOllamaClient } from './services/ollamaClient.js';
 import { createWhatsAppClient } from './services/whatsappClient.js';
 import { publicOrigin } from './repositories/meetingRepository.js';
@@ -22,6 +23,7 @@ import activityLogRoutes from './routes/activityLogRoutes.js';
 import alertRoutes, { publicAlertRoutes } from './routes/alertRoutes.js';
 import contractRoutes from './routes/contractRoutes.js';
 import goalRoutes from './routes/goalRoutes.js';
+import nexRoutes from './routes/nexRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
 import dealRoutes from './routes/dealRoutes.js';
@@ -161,6 +163,8 @@ export async function buildApp() {
     app.log.warn('AI_ENABLED=true mas o WhatsApp está desligado: a IA não vai sugerir respostas.');
   }
   app.decorate('ai', { ollama, agent: aiAgent, model: config.ai.model, enabled: Boolean(aiAgent) });
+  // Nex: revê cada mensagem antes do envio (correção + reformulação). Só precisa do Ollama.
+  app.decorate('nex', ollama ? createNexReviewer({ ollama, logger: app.log.child({ module: 'nex' }) }) : null);
 
   // Lembretes das reuniões marcadas (no dia e 1h antes), ao cliente e a quem conduz.
   const reminders = createMeetingReminders({
@@ -216,6 +220,7 @@ export async function buildApp() {
 
     // WhatsApp (sessão, QR Code e conversas)
     await protectedApp.register(whatsappRoutes);
+    await protectedApp.register(nexRoutes);
 
     // Videochamadas (salas da equipe)
     await protectedApp.register(meetingRoutes);

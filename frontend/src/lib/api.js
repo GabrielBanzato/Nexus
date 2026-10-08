@@ -194,6 +194,8 @@ export const startLeadConversation = (leadId) => request(`/api/leads/${leadId}/c
 /** Sugestão da IA (rascunho, nunca enviado sozinho). GET: a atual + meta.pending; POST: gera já. */
 export const getAiSuggestion = (clientId) => request(`/api/clients/${clientId}/ai-suggestion`);
 export const requestAiSuggestion = (clientId) => request(`/api/clients/${clientId}/ai-suggestion`, { method: 'POST' }).then(unwrap);
+/** Nex (IA da casa): correção e reformulação de uma mensagem antes de a enviar. */
+export const reviewWithNex = (text, { signal } = {}) => request('/api/nex/review', { ...json('POST', { text }), signal }).then(unwrap);
 // Sessão do WhatsApp (só admin)
 export const getWhatsAppQr = () => request('/api/whatsapp/qr').then(unwrap);
 export const getWhatsAppStatus = () => request('/api/whatsapp/status').then(unwrap);

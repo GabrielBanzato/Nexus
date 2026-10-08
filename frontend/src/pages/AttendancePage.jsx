@@ -20,6 +20,7 @@ import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
 import { useSocketConnected, useSocketEvent } from '../lib/socket.js';
 import { useToast } from '../components/toast.jsx';
 import { WhatsAppConnectModal, WhatsAppStatusPill } from '../components/WhatsAppConnect.jsx';
+import { NexReviewCard, useNexReview } from '../components/NexReview.jsx';
 import { Avatar, Button, ConfirmDialog, EmptyState, ErrorState, Modal, Spinner, cx, inputClass } from '../components/ui.jsx';
 
 /**
@@ -666,6 +667,18 @@ function AiSuggestionCard({ ai, onUse }) {
 function Composer({ disabled, onSend, signature, ai, initialText = '' }) {
   const [text, setText] = useState(initialText);
   const ref = useRef(null);
+  // Nex revê cada mensagem (sempre ligado): o envio só libera depois do pop-up dele aparecer.
+  const nex = useNexReview(text);
+
+  const applyNexVersion = (value) => {
+    setText(value);
+    nex.accept(value);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      el?.focus();
+      el?.setSelectionRange(value.length, value.length);
+    });
+  };
 
   const applySuggestion = (reply) => {
     setText(reply);
@@ -691,7 +704,9 @@ function Composer({ disabled, onSend, signature, ai, initialText = '' }) {
   const submit = (event) => {
     event?.preventDefault();
     if (!trimmed || tooLong || disabled) return;
+    if (!nex.ready) return nex.reviewNow(); // Enter antes da revisão: pede-a já, não envia
     onSend(trimmed);
+    nex.reset();
     setText('');
     ref.current?.focus();
   };
@@ -700,6 +715,7 @@ function Composer({ disabled, onSend, signature, ai, initialText = '' }) {
     <form onSubmit={submit} className="flex items-end gap-2 border-t border-neutral-800 bg-[#141414] p-3">
       <div className="min-w-0 flex-1">
         {ai && <AiSuggestionCard ai={ai} onUse={applySuggestion} />}
+        <NexReviewCard nex={nex} text={text} onUse={applyNexVersion} />
         {signature && (
           <p className="mb-1.5 text-[11px] text-neutral-500">
             Suas mensagens chegam ao cliente assinadas como <strong className="font-semibold text-neutral-300">*{signature}*</strong>
@@ -727,9 +743,9 @@ function Composer({ disabled, onSend, signature, ai, initialText = '' }) {
       </div>
       <button
         type="submit"
-        disabled={disabled || !trimmed || tooLong}
+        disabled={disabled || !trimmed || tooLong || !nex.ready}
         aria-label="Enviar mensagem"
-        title="Enviar (Enter)"
+        title={trimmed && !nex.ready ? 'Aguarde a revisão do Nex' : 'Enviar (Enter)'}
         className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-red-800 text-white shadow-lg shadow-red-950/40 ring-1 ring-red-600/30 transition hover:bg-red-700 active:scale-95 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-500 disabled:shadow-none disabled:ring-0"
       >
         <SendHorizontal className="size-4" />

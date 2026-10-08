@@ -16,7 +16,7 @@ function parseEndereco(endereco) {
 
 const COLUMNS = [
   // --- Identificadores Meta Ads ---
-  { header: 'phone', value: (lead) => normalizarTelefoneWhatsApp(lead.phone) ?? '' }, // 55 + DDD + número
+  { header: 'phone', value: (lead) => normalizarTelefoneWhatsApp(lead.phone, lead.address) ?? '' }, // 55 + DDD + número
   { header: 'ct', value: (lead) => parseEndereco(lead.address).cidade },
   { header: 'st', value: (lead) => parseEndereco(lead.address).uf },
   { header: 'zip', value: (lead) => parseEndereco(lead.address).cep },

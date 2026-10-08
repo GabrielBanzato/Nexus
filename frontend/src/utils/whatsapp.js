@@ -11,7 +11,7 @@
  * EUA, Austrália, Reino Unido..., espanhol na Espanha e América hispânica. O "bom dia" segue a
  * hora LOCAL da empresa (a Austrália está ~13h à frente).
  */
-import { detectCountry, localHour } from './country.js';
+import { detectCountry, internationalPhone, localHour } from './country.js';
 
 const REMETENTE = {
   empresa: 'Encoding',
@@ -59,11 +59,11 @@ function normalizarLead(lead) {
 
 /**
  * Converte o telefone do Maps para o formato do wa.me (DDI + número).
- * Com "+" (empresas de fora: "+1 512-256-2426") já vem com o DDI: usa-se como está. Sem "+",
- * é brasileiro: DDI 55 + DDD + número.
+ * Empresas de fora levam o DDI pelo país (endereço ou formato local: "(857) 305-3392" de Boston
+ * vira 1 857...). Com "+" usa-se como está. O resto é brasileiro: DDI 55 + DDD + número.
  */
-export function normalizarTelefoneWhatsApp(telefone) {
-  const texto = String(telefone || '').trim();
+export function normalizarTelefoneWhatsApp(telefone, endereco) {
+  const texto = internationalPhone(telefone, endereco) ?? '';
   const digitos = texto.replace(/\D/g, '');
   if (texto.startsWith('+')) return digitos.length >= 8 && digitos.length <= 15 ? digitos : null;
   if (!digitos || digitos.startsWith('0')) return null; // 0800 / 0300 não têm WhatsApp
@@ -318,7 +318,7 @@ export function gerarMensagemWhatsApp(lead) {
 export function gerarLinkWhatsApp(lead) {
   if (!lead) return null;
 
-  const numero = normalizarTelefoneWhatsApp(lead.phone ?? lead.telefone);
+  const numero = normalizarTelefoneWhatsApp(lead.phone ?? lead.telefone, lead.address ?? lead.endereco);
   if (!numero) return null;
 
   const mensagem = gerarMensagemWhatsApp(lead);

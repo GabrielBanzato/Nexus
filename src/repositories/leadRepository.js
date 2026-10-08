@@ -1,4 +1,43 @@
 import { db } from '../config/database.js';
+import { internationalPhone } from '../lib/country.js';
+
+/**
+ * Leads e clientes de fora gravados antes do DDI automático ficaram com o telefone local
+ * ("(857) 305-3392"), que o envio tratava como brasileiro (55 857... = um número no Ceará).
+ * Corre em cada arranque e só mexe no que precisa:
+ *  - leads: telefone com DDI pelo país do endereço/formato;
+ *  - clientes: o mesmo telefone; se o contacto de WhatsApp já tinha sido ligado ao número
+ *    brasileiro errado, desliga-o (volta a ser ligado ao número certo no próximo envio).
+ * @returns {Promise<{ leads: number, clients: number, wrongContacts: number }>}
+ */
+export async function fixForeignPhones() {
+  const result = { leads: 0, clients: 0, wrongContacts: 0 };
+  const leads = await db('leads').whereNotNull('telefone').whereNot('telefone', 'like', '+%').select('id', 'telefone', 'endereco');
+  for (const lead of leads) {
+    const fixed = internationalPhone(lead.telefone, lead.endereco);
+    if (!fixed || fixed === lead.telefone) continue;
+    await db('leads').where({ id: lead.id }).update({ telefone: fixed, atualizado_em: db.raw('atualizado_em') });
+    result.leads += 1;
+  }
+
+  const clients = await db('clients as c')
+    .leftJoin('leads as l', 'l.id', 'c.lead_id')
+    .whereNotNull('c.phone')
+    .whereNot('c.phone', 'like', '+%')
+    .select('c.id', 'c.phone', 'c.whatsapp_jid', 'l.endereco');
+  for (const client of clients) {
+    const fixed = internationalPhone(client.phone, client.endereco);
+    if (!fixed || fixed === client.phone) continue;
+    const local = client.phone.replace(/\D/g, '');
+    const wrongJid = client.whatsapp_jid === `55${local}@c.us`;
+    await db('clients')
+      .where({ id: client.id })
+      .update({ phone: fixed, ...(wrongJid && { whatsapp_jid: null }), updated_at: db.raw('updated_at') });
+    result.clients += 1;
+    if (wrongJid) result.wrongContacts += 1;
+  }
+  return result;
+}
 
 const normalizeText = (value) =>
   (value || '')
@@ -65,7 +104,9 @@ export async function upsertLead(lead) {
     nome: lead.name,
     nicho: lead.category,
     endereco: lead.address,
-    telefone: lead.phone,
+    // Empresas de fora ficam com o DDI ("(857) 305-3392" de Boston → "+1 857-305-3392"). A chave de
+    // deduplicação continua a usar o telefone como veio do Maps (buildDedupeKey acima).
+    telefone: internationalPhone(lead.phone, lead.address),
     website: lead.website,
     nota: lead.rating,
     avaliacoes_qtd: lead.reviewsCount,

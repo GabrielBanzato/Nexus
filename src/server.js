@@ -10,6 +10,7 @@ import { assertAuthConfig, authenticate, registerAuth } from './plugins/auth.js'
 import { registerMeetSignaling } from './plugins/meetSignaling.js';
 import { registerSocket, rooms } from './plugins/socket.js';
 import { ensureBootstrapAdmin } from './repositories/userRepository.js';
+import { fixForeignPhones } from './repositories/leadRepository.js';
 import { createAiAgent } from './services/aiAgent.js';
 import { createOllamaClient } from './services/ollamaClient.js';
 import { createWhatsAppClient } from './services/whatsappClient.js';
@@ -248,6 +249,13 @@ async function start() {
   try {
     await initDatabase({ logger: app.log });
     await ensureBootstrapAdmin(app.log);
+    // Telefones de empresas de fora sem DDI (extraídos antes da correção): não impede o arranque.
+    await fixForeignPhones()
+      .then((fixed) => {
+        if (fixed.leads || fixed.clients) app.log.info(fixed, 'Telefones de empresas de fora corrigidos (DDI do país)');
+        if (fixed.wrongContacts) app.log.warn({ contacts: fixed.wrongContacts }, 'Havia conversas ligadas ao número brasileiro errado (55 + número de fora): desligadas');
+      })
+      .catch((err) => app.log.error({ err }, 'Falha ao corrigir telefones de fora'));
     await app.push.init();
     await app.listen({ port: config.server.port, host: config.server.host });
     // Em segundo plano: o Chrome do WhatsApp leva alguns segundos e não deve atrasar a API.

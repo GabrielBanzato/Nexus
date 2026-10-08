@@ -1,4 +1,5 @@
 import { db } from '../config/database.js';
+import { internationalPhone } from '../lib/country.js';
 
 export const CLIENT_STATUSES = ['lead', 'active', 'archived'];
 export const CLIENT_FIELDS = ['name', 'company', 'phone', 'email', 'status', 'responsible_id', 'lead_id', 'bot_active'];
@@ -76,7 +77,8 @@ export function phoneMatchKeys(digits) {
  * como está. Sem "+", 10–11 dígitos = número brasileiro sem DDI → prefixa 55. null se não der.
  */
 export function toWhatsAppNumber(phone) {
-  const text = String(phone ?? '').trim();
+  // Formatos locais de fora ("(857) 305-3392" dos EUA) ganham o DDI aqui, antes da regra do Brasil.
+  const text = internationalPhone(phone) ?? '';
   const digits = text.replace(/\D/g, '');
   if (text.startsWith('+')) return digits.length >= 8 && digits.length <= 15 ? digits : null;
   if (!digits || digits.startsWith('0')) return null; // 0800/0300 não têm WhatsApp

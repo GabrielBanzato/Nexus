@@ -32,7 +32,7 @@ function Building({ goal, viewerId }) {
       <div className="relative w-16 shrink-0 sm:w-20">
         {FLOORS.map((f) => (
           <span key={f} className="absolute right-2 translate-y-1/2 text-right text-[10px] leading-tight text-neutral-500 tabular-nums" style={{ bottom: `${level(f)}%` }}>
-            {f === 1 ? <span className="font-semibold text-amber-300">META</span> : f === 0 ? 'térreo' : percent(f)}
+            {f === 1 ? <span className="font-semibold text-amber-300">BASE</span> : f === 0 ? 'térreo' : percent(f)}
             {f > 0 && f < 1 && <span className="block text-neutral-600">{formatGoalValue(goal.metric, goal.target * f, { compact: true })}</span>}
           </span>
         ))}

@@ -1,47 +1,68 @@
+import { createGlBlurRenderer } from './blurRenderer.js';
 import { tickerWorker } from './recorder.js';
 
 /**
  * Desfoque do fundo da câmara, no navegador de quem o liga (nada passa pelo servidor).
  *
  *  1. Nativo: alguns navegadores/sistemas (ex.: Chrome no Windows/ChromeOS com efeitos de
- *     câmara) têm desfoque próprio (constraint `backgroundBlur`) — sem custo de CPU para nós.
- *  2. Senão, MediaPipe (Google): um modelo pequeno (~250 KB) separa a pessoa do fundo em cada
- *     quadro; o canvas desenha o fundo desfocado e a pessoa nítida por cima, e a faixa do canvas
- *     é a que segue na chamada (replaceTrack). A segmentação corre numa imagem pequena
- *     (256×144): leve o bastante para portáteis comuns; a máscara é ampliada com suavização.
+ *     câmara) têm desfoque próprio (constraint `backgroundBlur`) — sem custo para nós.
+ *  2. Senão, MediaPipe (Google) separa a pessoa do fundo e a GPU compõe o resultado
+ *     (blurRenderer.js: borda refinada pelas cores da imagem, fundo desfocado SEM a pessoa,
+ *     sem halo). Sem WebGL2, uma versão mais simples em canvas 2D.
  *
- * O MediaPipe só é descarregado quando alguém liga o desfoque pela primeira vez.
+ * Modelos: no computador o "selfie multiclass" (15,6 MB, distingue cabelo, pele, roupa e
+ * acessórios — recorte muito melhor no cabelo e em auscultadores); no telemóvel o leve
+ * (0,24 MB). Descarregados só quando alguém liga o desfoque; depois ficam na cache do navegador.
  */
 
 const MEDIAPIPE_VERSION = '0.10.21'; // = package.json (o wasm vem do CDN da mesma versão)
 const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
-const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
-const MASK_W = 256;
-const MASK_H = 144;
+const MODELS = {
+  // masks[0] = fundo → pessoa = 1 − fundo
+  multiclass: { url: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite', personIndex: 0, invert: true },
+  // masks[0] = pessoa
+  light: { url: 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite', personIndex: 0, invert: false },
+};
+// Resolução da entrada do modelo (16:9). A máscara sai com este tamanho e a GPU refina-a.
+const SEG_W = 320;
+const SEG_H = 180;
 const FPS = 24;
-const BLUR_PX = 14;
+const SMOOTHING = 0.35; // peso do quadro anterior na máscara (tira o tremor da borda)
 
-let segmenterPromise = null;
+const isMobile = () => /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
-/** Um só segmentador por página (carregar o modelo leva 1–3 s na 1.ª vez). */
-function loadSegmenter() {
-  segmenterPromise ??= (async () => {
-    const { FilesetResolver, ImageSegmenter } = await import('@mediapipe/tasks-vision');
-    const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
-    const create = (delegate) =>
-      ImageSegmenter.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate },
-        runningMode: 'VIDEO',
-        outputCategoryMask: false,
-        outputConfidenceMasks: true,
-      });
-    // GPU quando há WebGL2; senão CPU (mais lento, mas funciona).
-    return create('GPU').catch(() => create('CPU'));
-  })().catch((err) => {
-    segmenterPromise = null; // deixa tentar de novo
-    throw err;
-  });
-  return segmenterPromise;
+const segmenters = new Map(); // modelo → Promise do segmentador
+
+function loadSegmenter(modelKey) {
+  if (!segmenters.has(modelKey)) {
+    const promise = (async () => {
+      const { FilesetResolver, ImageSegmenter } = await import('@mediapipe/tasks-vision');
+      const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
+      const create = (delegate) =>
+        ImageSegmenter.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: MODELS[modelKey].url, delegate },
+          runningMode: 'VIDEO',
+          outputCategoryMask: false,
+          outputConfidenceMasks: true,
+        });
+      return create('GPU').catch(() => create('CPU'));
+    })();
+    promise.catch(() => segmenters.delete(modelKey)); // deixa tentar de novo
+    segmenters.set(modelKey, promise);
+  }
+  return segmenters.get(modelKey);
+}
+
+/** O melhor modelo para este aparelho; se não carregar (rede, memória), o leve. */
+async function loadBestSegmenter() {
+  if (!isMobile()) {
+    try {
+      return { segmenter: await loadSegmenter('multiclass'), model: MODELS.multiclass };
+    } catch (err) {
+      console.warn('Desfoque: modelo completo indisponível, a usar o leve', err);
+    }
+  }
+  return { segmenter: await loadSegmenter('light'), model: MODELS.light };
 }
 
 /** Desfoque nativo da câmara, se o navegador o oferecer nesta faixa. */
@@ -54,12 +75,48 @@ export async function setNativeBlur(track, on) {
   await track.applyConstraints({ advanced: [{ backgroundBlur: on }] });
 }
 
+/** Composição em canvas 2D, para aparelhos sem WebGL2. */
+function createCanvasRenderer(width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const mask = document.createElement('canvas');
+  mask.width = SEG_W;
+  mask.height = SEG_H;
+  const maskCtx = mask.getContext('2d');
+  const maskImage = maskCtx.createImageData(SEG_W, SEG_H);
+  const person = document.createElement('canvas');
+  person.width = width;
+  person.height = height;
+  const personCtx = person.getContext('2d');
+  const blurPx = Math.round(width / 80);
+  return {
+    canvas,
+    render(video, alpha) {
+      for (let i = 0; i < alpha.length; i += 1) maskImage.data[i * 4 + 3] = alpha[i];
+      maskCtx.putImageData(maskImage, 0, 0);
+      ctx.filter = `blur(${blurPx}px)`;
+      ctx.drawImage(video, -blurPx * 2, -blurPx * 2, width + blurPx * 4, height + blurPx * 4);
+      ctx.filter = 'none';
+      personCtx.globalCompositeOperation = 'copy';
+      personCtx.drawImage(video, 0, 0, width, height);
+      personCtx.globalCompositeOperation = 'destination-in';
+      personCtx.filter = 'blur(1.5px)';
+      personCtx.drawImage(mask, 0, 0, width, height);
+      personCtx.filter = 'none';
+      ctx.drawImage(person, 0, 0);
+    },
+    destroy() {},
+  };
+}
+
 /**
  * Faixa de vídeo com o fundo desfocado, a partir da faixa da câmara.
- * @returns {Promise<{ track: MediaStreamTrack, stop: () => void }>}
+ * @returns {Promise<{ track: MediaStreamTrack, stop: () => void, quality: 'gpu'|'canvas', model: string }>}
  */
 export async function createBlurredTrack(sourceTrack) {
-  const segmenter = await loadSegmenter();
+  const { segmenter, model } = await loadBestSegmenter();
   const settings = sourceTrack.getSettings();
   const width = settings.width || 1280;
   const height = settings.height || 720;
@@ -70,79 +127,66 @@ export async function createBlurredTrack(sourceTrack) {
   video.srcObject = new MediaStream([sourceTrack]);
   await video.play().catch(() => {});
 
-  const out = document.createElement('canvas');
-  out.width = width;
-  out.height = height;
-  const ctx = out.getContext('2d');
+  const seg = document.createElement('canvas'); // entrada do modelo
+  seg.width = SEG_W;
+  seg.height = SEG_H;
+  const segCtx = seg.getContext('2d', { willReadFrequently: true });
 
-  const small = document.createElement('canvas'); // entrada da segmentação
-  small.width = MASK_W;
-  small.height = MASK_H;
-  const smallCtx = small.getContext('2d', { willReadFrequently: true });
+  let renderer = null;
+  try {
+    renderer = createGlBlurRenderer(width, height);
+  } catch (err) {
+    console.warn('Desfoque: WebGL indisponível, a usar canvas 2D', err);
+  }
+  const quality = renderer ? 'gpu' : 'canvas';
+  renderer ??= createCanvasRenderer(width, height);
 
-  const mask = document.createElement('canvas'); // máscara (alfa = "é pessoa")
-  mask.width = MASK_W;
-  mask.height = MASK_H;
-  const maskCtx = mask.getContext('2d');
-  const maskImage = maskCtx.createImageData(MASK_W, MASK_H);
-
-  const person = document.createElement('canvas'); // pessoa recortada, em tamanho real
-  person.width = width;
-  person.height = height;
-  const personCtx = person.getContext('2d');
-
+  const smooth = new Float32Array(SEG_W * SEG_H); // máscara com suavização entre quadros
+  const mask8 = new Uint8Array(SEG_W * SEG_H);
+  let first = true;
   let lastTs = -1;
-  const draw = () => {
+
+  const frame = () => {
     if (video.readyState < 2 || sourceTrack.readyState !== 'live') return;
-    // Câmara desligada (enabled=false) chega preta: passa direto, sem gastar com segmentação.
-    smallCtx.drawImage(video, 0, 0, MASK_W, MASK_H);
+    segCtx.drawImage(video, 0, 0, SEG_W, SEG_H);
     const ts = Math.max(performance.now(), lastTs + 1);
     lastTs = ts;
-    const result = segmenter.segmentForVideo(small, ts);
-    const confidence = result.confidenceMasks?.[0]?.getAsFloat32Array();
-    if (confidence) {
-      const data = maskImage.data;
-      for (let i = 0; i < confidence.length; i += 1) {
-        // Curva suave: bordas sem "halo" duro; fundo com alguma certeza vira transparente.
-        const c = confidence[i];
-        data[i * 4 + 3] = c < 0.25 ? 0 : c > 0.75 ? 255 : ((c - 0.25) / 0.5) * 255;
+    const result = segmenter.segmentForVideo(seg, ts);
+    const raw = result.confidenceMasks?.[model.personIndex]?.getAsFloat32Array();
+    if (raw && raw.length === smooth.length) {
+      const keep = first ? 0 : SMOOTHING;
+      for (let i = 0; i < raw.length; i += 1) {
+        const p = model.invert ? 1 - raw[i] : raw[i];
+        smooth[i] = smooth[i] * keep + p * (1 - keep);
+        mask8[i] = smooth[i] * 255;
       }
-      maskCtx.putImageData(maskImage, 0, 0);
+      first = false;
     }
     result.close();
-
-    // Fundo desfocado (um pouco ampliado: o blur escurece as bordas do quadro).
-    ctx.filter = `blur(${BLUR_PX}px)`;
-    ctx.drawImage(video, -BLUR_PX * 2, -BLUR_PX * 2, width + BLUR_PX * 4, height + BLUR_PX * 4);
-    ctx.filter = 'none';
-    // Pessoa nítida: o vídeo recortado pela máscara (ampliada com suavização = borda macia).
-    personCtx.globalCompositeOperation = 'copy';
-    personCtx.drawImage(video, 0, 0, width, height);
-    personCtx.globalCompositeOperation = 'destination-in';
-    personCtx.imageSmoothingEnabled = true;
-    personCtx.drawImage(mask, 0, 0, width, height);
-    ctx.drawImage(person, 0, 0);
+    if (!first) renderer.render(video, mask8, SEG_W, SEG_H);
   };
 
-  // Relógio num Worker: com a aba em segundo plano (ex.: a partilhar outra janela) o vídeo
-  // enviado não congela.
+  // Relógio num Worker: com a aba em segundo plano o vídeo enviado não congela.
   const ticker = tickerWorker();
   ticker.onmessage = () => {
     try {
-      draw();
+      frame();
     } catch (err) {
       console.warn('Desfoque: quadro ignorado', err);
     }
   };
   ticker.postMessage(Math.round(1000 / FPS));
 
-  const track = out.captureStream(FPS).getVideoTracks()[0];
+  const track = renderer.canvas.captureStream(FPS).getVideoTracks()[0];
   return {
     track,
+    quality,
+    model: model === MODELS.multiclass ? 'multiclass' : 'light',
     stop() {
       ticker.postMessage(0);
       ticker.terminate();
       track.stop();
+      renderer.destroy();
       video.srcObject = null;
     },
   };

@@ -135,7 +135,8 @@ function PeerAudioControl({ name, audio, onChange }) {
   const toggleMute = () => onChange({ ...audio, muted: !audio.muted, volume: audio.volume || 1 });
 
   return (
-    <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+    // z-10: por cima da inicial (câmara desligada) e do aviso "a ligar", que cobrem o quadro todo.
+    <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
       <button
         type="button"
         onClick={volumeAdjustable ? () => setOpen((v) => !v) : toggleMute}

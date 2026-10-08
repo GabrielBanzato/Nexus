@@ -91,9 +91,14 @@ function StreamVideo({ stream, muted, volume = 1, mirrored, onElement, className
     if (el && el.srcObject !== stream) el.srcObject = stream ?? null;
   });
   // Volume só deste participante, só para quem ouve (no iPhone o volume é do sistema: só mudo).
+  // "muted" também à mão: o React nem sempre o aplica ao <video> antes de começar a tocar, e a
+  // minha própria voz a sair pelas minhas colunas seria eco para todos.
   useEffect(() => {
-    if (ref.current) ref.current.volume = Math.min(Math.max(volume, 0), 1);
-  }, [volume]);
+    const el = ref.current;
+    if (!el) return;
+    el.muted = Boolean(muted);
+    el.volume = Math.min(Math.max(volume, 0), 1);
+  }, [muted, volume, stream]);
   return (
     <video
       ref={(el) => {
@@ -253,7 +258,28 @@ function saveDevice(kind, deviceId) {
   }
 }
 
-const audioConstraints = (deviceId) => ({ echoCancellation: true, noiseSuppression: true, ...(deviceId && { deviceId }) });
+/**
+ * Microfone com o tratamento de voz do navegador SEMPRE ligado: cancelamento de eco (tira do
+ * microfone o som que sai das colunas — é o que evita os outros ouvirem a própria voz de volta),
+ * supressão de ruído e ganho automático. "voiceIsolation" (Chrome recente) isola ainda mais a voz.
+ */
+const audioConstraints = (deviceId) => ({
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  voiceIsolation: true,
+  channelCount: 1,
+  ...(deviceId && { deviceId }),
+});
+
+/** Alguns microfones (ex.: virtuais) abrem sem o cancelamento de eco: tenta forçá-lo. */
+async function ensureEchoCancellation(track) {
+  if (!track || track.kind !== 'audio') return;
+  const settings = track.getSettings?.() ?? {};
+  if (settings.echoCancellation === false || settings.noiseSuppression === false) {
+    await track.applyConstraints({ echoCancellation: true, noiseSuppression: true, autoGainControl: true }).catch(() => {});
+  }
+}
 const videoConstraints = (deviceId) => ({ width: { ideal: 1280 }, height: { ideal: 720 }, ...(deviceId ? { deviceId } : { facingMode: 'user' }) });
 
 /**
@@ -270,7 +296,9 @@ async function getLocalMedia() {
   let lastError = null;
   for (const constraints of attempts) {
     try {
-      return { stream: await navigator.mediaDevices.getUserMedia(constraints), error: null };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      await ensureEchoCancellation(stream.getAudioTracks()[0]);
+      return { stream, error: null };
     } catch (err) {
       lastError = err;
     }
@@ -339,8 +367,11 @@ function DevicePicker({ devices, current, onChange, busy, error, className }) {
 }
 
 export default function MeetingRoom({ code }) {
-  const token = getToken();
-  const staffName = getTokenPayload()?.name ?? null;
+  // Equipe = quem tem sessão do Nexus neste navegador: só ela grava e encerra para todos (o servidor
+  // também o garante). ?convidado entra como o cliente entraria, mesmo com sessão (para testar).
+  const asGuest = new URLSearchParams(window.location.search).has('convidado');
+  const token = asGuest ? null : getToken();
+  const staffName = asGuest ? null : getTokenPayload()?.name ?? null;
   const [info, setInfo] = useState(null); // dados públicos da sala
   const [infoError, setInfoError] = useState(null);
   const [name, setName] = useState(() => staffName ?? readName());
@@ -465,6 +496,7 @@ export default function MeetingRoom({ code }) {
       setMediaError((e) => (e === 'no-camera' ? null : e));
     } else {
       track.enabled = mic;
+      await ensureEchoCancellation(track);
     }
     setLocalStream(new MediaStream([...keep, track]));
     // Na chamada: o novo microfone segue já; o vídeo segue pelo efeito acima (com ou sem desfoque).
@@ -771,7 +803,14 @@ export default function MeetingRoom({ code }) {
                   {connecting && <LoaderCircle className="size-4 animate-spin" />}
                   {connecting ? 'A entrar...' : 'Entrar na reunião'}
                 </button>
-                {staffName && <p className="text-xs text-neutral-500">Vai entrar como {staffName} (equipe).</p>}
+                {staffName && (
+                  <p className="text-xs text-neutral-500">
+                    Vai entrar como {staffName} (equipe): só a equipe pode gravar e encerrar para todos.{' '}
+                    <a href={`?convidado=1`} target="_blank" rel="noopener noreferrer" className="font-medium text-neutral-400 underline hover:text-white">
+                      Ver como o cliente vê
+                    </a>
+                  </p>
+                )}
               </>
             )}
           </form>

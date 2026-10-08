@@ -123,6 +123,10 @@ export function describeActivity(log) {
       return { title: 'devolveu o atendimento à IA', kind: 'edit' };
     case 'ai.handoff':
       return { title: `A IA passou a conversa para um humano: ${AI_HANDOFF_REASONS[d.reason]?.(d.intent) ?? d.reason}`, kind: 'move' };
+    case 'payment.record':
+      return { title: `marcou a mensalidade de ${d.month?.split('-').reverse().join('/')} como paga`, body: d.amount != null ? formatCurrency(d.amount) : null, kind: 'won' };
+    case 'payment.remove':
+      return { title: `desmarcou o pagamento da mensalidade de ${d.month?.split('-').reverse().join('/')}`, kind: 'edit' };
     case 'deal.delete':
       return { title: `apagou o negócio "${d.title}"`, kind: 'delete' };
     case 'client.create':
@@ -175,6 +179,15 @@ const FIELD_LABELS = {
   name: 'nome',
   client_id: 'cliente',
   expected_close_date: 'previsão de fecho',
+  pains: 'dores do cliente',
+  proposal_offer: 'proposta real',
+  bait: 'isca',
+  final_proposal: 'proposta final',
+  won_scope: 'sistema a fazer',
+  delivery_due: 'prazo de entrega',
+  monthly_value: 'mensalidade',
+  monthly_start: 'início da mensalidade',
+  monthly_end: 'fim da mensalidade',
 };
 
 const relative = new Intl.RelativeTimeFormat('pt-PT', { numeric: 'auto' });

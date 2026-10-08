@@ -69,3 +69,27 @@ export function scheduleDaily({ hour, timeZone, task, logger }) {
     next: () => nextAt,
   };
 }
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/** 'YYYY-MM-DD' de `date` no fuso `timeZone` (ex.: "hoje em São Paulo"). */
+export function dateKeyIn(date, timeZone) {
+  const p = zonedParts(date, timeZone);
+  return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
+}
+
+/** Instante (UTC) da meia-noite do dia `ymd` ('YYYY-MM-DD') no fuso `timeZone`. */
+export function startOfDayIn(ymd, timeZone) {
+  return sameDayAt(new Date(`${ymd}T12:00:00Z`), 0, timeZone);
+}
+
+/** 'YYYY-MM' → o mês seguinte. */
+export function nextMonthKey(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${pad2(m + 1)}`;
+}
+
+/** Intervalo [from, to) do mês 'YYYY-MM' no fuso da empresa. */
+export function monthRange(ym, timeZone) {
+  return { from: startOfDayIn(`${ym}-01`, timeZone), to: startOfDayIn(`${nextMonthKey(ym)}-01`, timeZone) };
+}

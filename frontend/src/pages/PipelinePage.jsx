@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DndContext, DragOverlay, useDroppable } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Building2, CalendarCheck, CalendarClock, Check, Copy, Handshake, MessageCircle, Plus, Search, StickyNote, Target, Trash2, TrendingUp, Trophy, UserRound, Video } from 'lucide-react';
+import { Building2, CalendarCheck, CalendarClock, Check, Copy, Handshake, MessageCircle, Package, Plus, Search, StickyNote, Target, Trash2, TrendingUp, Trophy, UserRound, Video } from 'lucide-react';
 import { addNote, createDeal, deleteDeal, getDealBoard, meetingUrl, moveDeal, scheduleMeeting, updateDeal } from '../lib/api.js';
 import { confirmationPreview, greetingName } from '../lib/meetingTexts.js';
 import { useAuth } from '../lib/auth.jsx';
@@ -20,6 +20,7 @@ import {
 } from '../lib/labels.js';
 import { useBoardDnd } from '../lib/useBoardDnd.js';
 import ActivityTimeline from '../components/ActivityTimeline.jsx';
+import DealStageModal, { DealStageAnswers, STAGES_WITH_DETAILS } from '../components/DealStageModal.jsx';
 import { useToast } from '../components/toast.jsx';
 import {
   Avatar,
@@ -40,6 +41,7 @@ import {
 } from '../components/ui.jsx';
 
 const STAGE_IDS = DEAL_STAGES.map((s) => s.id);
+const shortDate = (ymd) => (ymd ? `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}` : '');
 const daysSince = (date) => Math.floor((Date.now() - new Date(date).getTime()) / 86_400_000);
 
 // ---------------------------------------------------------------------------
@@ -80,6 +82,15 @@ function DealCard({ deal, overlay = false, onNote }) {
       )}
       {deal.stage === 'lost' && deal.lost_reason && <p className="mt-1.5 line-clamp-2 text-xs text-red-300/80">{deal.lost_reason}</p>}
       {deal.stage === 'meeting' && deal.meeting_at && <MeetingChip meetingAt={deal.meeting_at} code={deal.meeting_code} />}
+      {deal.stage === 'won' && deal.delivery_due && (
+        <p className="mt-1.5 flex items-center gap-1 text-xs text-emerald-300/80" title={deal.won_scope ?? undefined}>
+          <Package className="size-3 shrink-0" />
+          <span className="truncate">
+            Entrega até {shortDate(deal.delivery_due)}
+            {Number(deal.monthly_value) > 0 && ` · ${formatCurrencyCompact(deal.monthly_value)}/mês`}
+          </span>
+        </p>
+      )}
       {deal.last_note && (
         <p className="mt-2 flex gap-1.5 rounded-lg bg-neutral-900/80 px-2 py-1.5 text-xs text-neutral-400" title={`Última nota · ${formatRelative(deal.last_note_at)}`}>
           <StickyNote className="mt-0.5 size-3 shrink-0 text-amber-400/70" />
@@ -193,15 +204,17 @@ function SortableDeal({ deal, onOpen, onNote, canDrag }) {
 const EMPTY_COLUMN_TEXT = {
   lead: 'Leads qualificados no Radar de Prospecção aparecem aqui',
   meeting: 'Arraste para aqui ao marcar uma reunião: pedimos a data e confirmamos ao cliente pelo WhatsApp',
-  won: 'Arraste para aqui os clientes fechados',
-  lost: 'Negócios perdidos',
+  negotiation: 'Ao arrastar para aqui, conte as dores do cliente, a proposta real e a isca',
+  awaiting: 'Ao arrastar para aqui, registe a proposta final apresentada',
+  won: 'Arraste para aqui os clientes fechados: sistema, valor e prazo vão para o admin',
+  lost: 'Negócios perdidos (com o motivo)',
 };
 
 function StageColumn({ stage, deals, totals, onOpen, onNote, canDrag, onAdd }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
   const closedStage = stage.id === 'won' || stage.id === 'lost';
-  // "Reunião Agendada" só se alcança pelo agendamento (data/hora + confirmação), nunca criando direto.
-  const canCreateHere = !closedStage && stage.id !== 'meeting';
+  // Só se cria em Triagem/Novo: os estágios seguintes pedem dados num pop-up ao entrar.
+  const canCreateHere = stage.id === 'lead';
 
   // Em ecrãs largos (xl) as colunas dividem a largura: todas visíveis, sem scroll ao arrastar.
   return (
@@ -483,7 +496,7 @@ function MeetingLinkActions({ code }) {
   );
 }
 
-function DealDrawer({ deal, canEdit, canDelete, onClose, onMoveTo, onReschedule, onDeleted }) {
+function DealDrawer({ deal, canEdit, canDelete, onClose, onMoveTo, onReschedule, onEditAnswers, onDeleted }) {
   const [tab, setTab] = useState('details');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const queryClient = useQueryClient();
@@ -550,6 +563,7 @@ function DealDrawer({ deal, canEdit, canDelete, onClose, onMoveTo, onReschedule,
                 {deal.meeting_code && <MeetingLinkActions code={deal.meeting_code} />}
               </div>
             )}
+            <DealStageAnswers deal={deal} canEdit={canEdit} onEdit={(stage) => onEditAnswers(deal, stage)} />
             <fieldset disabled={!canEdit}>
               <DealForm
                 formId="deal-edit"
@@ -665,8 +679,10 @@ export default function PipelinePage() {
   const q = useDebouncedValue(search.trim());
   const [openId, setOpenId] = useState(null);
   const [creatingIn, setCreatingIn] = useState(null);
-  const [pendingLoss, setPendingLoss] = useState(null); // movimento para "Perdido" à espera do motivo
-  const [lossReason, setLossReason] = useState('');
+  // Movimento à espera das respostas do pop-up do estágio (negociação, proposta final, fecho, perda):
+  // { stage, deal, vars: { id, stage, position?, snapshot?, from } }
+  const [pendingStage, setPendingStage] = useState(null);
+  const [editingAnswers, setEditingAnswers] = useState(null); // { stage, deal }
   // Movimento para "Reunião Agendada" à espera da data/hora: { deal, vars: { id, position?, snapshot?, from } }
   const [pendingMeeting, setPendingMeeting] = useState(null);
   const [noteFor, setNoteFor] = useState(null);
@@ -677,14 +693,8 @@ export default function PipelinePage() {
   const { data, isLoading, isError, error, refetch } = useQuery({ queryKey: boardKey, queryFn: () => getDealBoard(params) });
 
   const moveMutation = useMutation({
-    mutationFn: ({ id, stage, position, lost_reason: lostReason }) => moveDeal(id, { stage, position, lost_reason: lostReason }),
-    onSuccess: (res, vars) => {
-      if (vars.stage === 'won' && vars.from !== 'won') {
-        toast.success('Negócio fechado! 🎉', res.meta.client_created_id ? `Cliente conquistado registado a partir de "${res.data.title}".` : res.data.title);
-        queryClient.invalidateQueries({ queryKey: ['clients'] });
-      }
-      queryClient.invalidateQueries({ queryKey: ['metrics'] });
-    },
+    mutationFn: ({ id, stage, position }) => moveDeal(id, { stage, position }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['metrics'] }),
     onError: (err, vars) => {
       if (vars.snapshot) queryClient.setQueryData(boardKey, (old) => (old ? { ...old, data: vars.snapshot } : old));
       toast.error('Não foi possível mover o negócio', err.message);
@@ -704,9 +714,10 @@ export default function PipelinePage() {
     onDrop: (move) => {
       queryClient.setQueryData(boardKey, (old) => (old ? { ...old, data: move.next } : old));
       const vars = { id: move.id, stage: move.column, position: move.position, snapshot: move.snapshot, from: move.from };
-      if (move.column === 'lost' && move.from !== 'lost') {
-        setLossReason('');
-        setPendingLoss(vars); // pede o motivo antes de gravar
+      // Estágios com pop-up: o cartão fica na coluna (otimista) enquanto o vendedor responde.
+      if (STAGES_WITH_DETAILS.includes(move.column) && move.from !== move.column) {
+        stageMutation.reset();
+        setPendingStage({ stage: move.column, deal: move.item, vars });
         return;
       }
       // Gatilho de reunião: o cartão fica na coluna (otimista) enquanto o pop-up pede a data/hora.
@@ -750,14 +761,36 @@ export default function PipelinePage() {
     setPendingMeeting({ deal, vars: { id: deal.id, from: deal.stage } }); // sem position = fim da coluna
   };
 
-  const cancelLoss = () => {
-    queryClient.setQueryData(boardKey, (old) => (old ? { ...old, data: pendingLoss.snapshot } : old));
-    setPendingLoss(null);
+  const stageMutation = useMutation({
+    mutationFn: ({ vars, body }) => moveDeal(vars.id, { stage: vars.stage, position: vars.position, ...body }),
+    onSuccess: (res, { vars }) => {
+      setPendingStage(null);
+      if (vars.stage === 'won') {
+        toast.success('Negócio fechado! 🎉', 'O admin foi avisado com o sistema, o valor e o prazo.');
+        queryClient.invalidateQueries({ queryKey: ['clients'] });
+      } else if (vars.stage === 'lost') toast.info('Negócio marcado como perdido', res.data.lost_reason);
+      else toast.success(`Movido para ${DEAL_STAGE_META[vars.stage].label}`, res.data.title);
+      queryClient.invalidateQueries({ queryKey: ['metrics'] });
+      queryClient.invalidateQueries({ queryKey: ['goals'] });
+    },
+    // Erro: o pop-up fica aberto com a mensagem; o cartão só volta se cancelar.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['deals'] }),
+  });
+  const cancelStage = () => {
+    if (pendingStage?.vars.snapshot) {
+      queryClient.setQueryData(boardKey, (old) => (old ? { ...old, data: pendingStage.vars.snapshot } : old));
+    }
+    setPendingStage(null);
   };
-  const confirmLoss = () => {
-    moveMutation.mutate({ ...pendingLoss, lost_reason: lossReason.trim() || null });
-    setPendingLoss(null);
-  };
+
+  const answersMutation = useMutation({
+    mutationFn: ({ deal, body }) => updateDeal(deal.id, body),
+    onSuccess: () => {
+      setEditingAnswers(null);
+      toast.success('Respostas atualizadas');
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['deals'] }),
+  });
 
   const all = Object.values(board).flat();
   const openDeal = openId ? all.find((d) => d.id === openId) : null;
@@ -875,14 +908,18 @@ export default function PipelinePage() {
           }}
           onMoveTo={(deal, stage) => {
             const vars = { id: deal.id, stage, from: deal.stage }; // sem position = fim do estágio
-            if (stage === 'lost' && deal.stage !== 'lost') {
-              setLossReason('');
-              setPendingLoss(vars);
+            if (STAGES_WITH_DETAILS.includes(stage) && deal.stage !== stage) {
+              stageMutation.reset();
+              setPendingStage({ stage, deal, vars });
             } else if (stage === 'meeting' && deal.stage !== 'meeting') {
               openMeetingFor(deal);
             } else moveMutation.mutate(vars);
           }}
           onReschedule={openMeetingFor}
+          onEditAnswers={(deal, stage) => {
+            answersMutation.reset();
+            setEditingAnswers({ deal, stage });
+          }}
         />
       )}
 
@@ -898,32 +935,31 @@ export default function PipelinePage() {
         />
       )}
 
-      <Modal
-        open={Boolean(pendingLoss)}
-        onClose={cancelLoss}
-        size="sm"
-        title="Marcar como perdido"
-        description="O motivo alimenta a análise de perdas da equipe."
-        footer={
-          <>
-            <Button variant="ghost" onClick={cancelLoss}>Cancelar</Button>
-            <Button variant="danger" onClick={confirmLoss}>Marcar como perdido</Button>
-          </>
-        }
-      >
-        <Field label="Motivo da perda">
-          {({ id }) => (
-            <Select id={id} value={lossReason} onChange={(e) => setLossReason(e.target.value)} data-autofocus>
-              <option value="">Sem motivo</option>
-              <option>Preço acima do orçamento</option>
-              <option>Escolheu um concorrente</option>
-              <option>Sem resposta do cliente</option>
-              <option>Projeto adiado</option>
-              <option>Fora do perfil</option>
-            </Select>
-          )}
-        </Field>
-      </Modal>
+      {pendingStage && (
+        <DealStageModal
+          key={`${pendingStage.deal.id}-${pendingStage.stage}`}
+          stage={pendingStage.stage}
+          deal={pendingStage.deal}
+          submitting={stageMutation.isPending}
+          error={stageMutation.error?.message}
+          onCancel={cancelStage}
+          onConfirm={(body) => stageMutation.mutate({ vars: pendingStage.vars, body })}
+        />
+      )}
+
+      {editingAnswers && (
+        <DealStageModal
+          key={`edit-${editingAnswers.deal.id}-${editingAnswers.stage}`}
+          editing
+          stage={editingAnswers.stage}
+          deal={editingAnswers.deal}
+          canEditBilling={isAdmin}
+          submitting={answersMutation.isPending}
+          error={answersMutation.error?.message}
+          onCancel={() => setEditingAnswers(null)}
+          onConfirm={(body) => answersMutation.mutate({ deal: editingAnswers.deal, body })}
+        />
+      )}
     </div>
   );
 }

@@ -251,6 +251,16 @@ const SCHEMA = [
         won_at               DATETIME       NULL,
         lost_at              DATETIME       NULL,
         meeting_at           DATETIME       NULL COMMENT 'Reunião agendada (UTC)',
+        pains                TEXT           NULL COMMENT 'Em Negociação: dores do cliente',
+        proposal_offer       TEXT           NULL COMMENT 'Em Negociação: proposta real',
+        bait                 TEXT           NULL COMMENT 'Em Negociação: isca do vendedor',
+        final_proposal       TEXT           NULL COMMENT 'Aguardando Resposta: proposta final apresentada',
+        won_scope            TEXT           NULL COMMENT 'Cliente Fechado: sistema a fazer',
+        delivery_due         DATE           NULL COMMENT 'Cliente Fechado: prazo de entrega',
+        monthly_value        DECIMAL(12,2)  NOT NULL DEFAULT 0 COMMENT 'Mensalidade combinada (0 = sem mensalidade)',
+        monthly_start        DATE           NULL COMMENT '1.º mês da mensalidade (dia 1)',
+        monthly_end          DATE           NULL COMMENT 'Último mês da mensalidade (dia 1); NULL = em curso',
+        closing_rate         DECIMAL(5,2)   NULL COMMENT '% de comissão do fecho (fixada ao fechar)',
         stage_changed_at     DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_by           INT UNSIGNED   NULL,
         created_at           DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -401,6 +411,124 @@ const SCHEMA = [
         COLLATE = utf8mb4_0900_ai_ci
     `,
   },
+  {
+    table: 'user_contracts',
+    sql: `
+      CREATE TABLE IF NOT EXISTS user_contracts (
+        user_id         INT UNSIGNED       NOT NULL,
+        closing_rate    DECIMAL(5,2)       NOT NULL DEFAULT 0 COMMENT '% sobre o valor de cada venda fechada',
+        monthly_rate    DECIMAL(5,2)       NOT NULL DEFAULT 0 COMMENT '% sobre cada mensalidade paga pelo cliente',
+        monthly_months  SMALLINT UNSIGNED  NULL COMMENT 'Quantos meses de mensalidade dão comissão (NULL = enquanto o cliente pagar)',
+        notes           VARCHAR(500)       NULL,
+        updated_by      INT UNSIGNED       NULL,
+        created_at      DATETIME           NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at      DATETIME           NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+        PRIMARY KEY (user_id),
+        CONSTRAINT chk_contract_rates CHECK (closing_rate BETWEEN 0 AND 100 AND monthly_rate BETWEEN 0 AND 100),
+        CONSTRAINT fk_contract_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+        CONSTRAINT fk_contract_updated_by FOREIGN KEY (updated_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
+  {
+    table: 'deal_payments',
+    sql: `
+      CREATE TABLE IF NOT EXISTS deal_payments (
+        id               INT UNSIGNED   NOT NULL AUTO_INCREMENT,
+        deal_id          INT UNSIGNED   NOT NULL,
+        month            DATE           NOT NULL COMMENT 'Mês da mensalidade (dia 1)',
+        amount           DECIMAL(12,2)  NOT NULL,
+        commission_rate  DECIMAL(5,2)   NULL COMMENT '% do vendedor no momento do registo',
+        paid_at          DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        recorded_by      INT UNSIGNED   NULL,
+
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_payment_deal_month (deal_id, month),
+        KEY idx_payment_month (month),
+        CONSTRAINT chk_payment_amount CHECK (amount >= 0),
+        CONSTRAINT fk_payment_deal FOREIGN KEY (deal_id) REFERENCES deals (id) ON DELETE CASCADE,
+        CONSTRAINT fk_payment_recorded_by FOREIGN KEY (recorded_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
+  {
+    table: 'goals',
+    sql: `
+      CREATE TABLE IF NOT EXISTS goals (
+        id           INT UNSIGNED   NOT NULL AUTO_INCREMENT,
+        title        VARCHAR(160)   NOT NULL,
+        metric       ENUM('won_value', 'won_count', 'meetings', 'new_mrr') NOT NULL,
+        target       DECIMAL(14,2)  NOT NULL,
+        scope        ENUM('individual', 'group') NOT NULL DEFAULT 'individual' COMMENT 'individual = cada um bate a sua; group = a soma de todos',
+        starts_on    DATE           NOT NULL,
+        ends_on      DATE           NOT NULL COMMENT 'Inclusivo',
+        reward       VARCHAR(500)   NULL,
+        created_by   INT UNSIGNED   NULL,
+        archived_at  DATETIME       NULL,
+        created_at   DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at   DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+        PRIMARY KEY (id),
+        KEY idx_goals_period (archived_at, ends_on),
+        CONSTRAINT chk_goals_target CHECK (target > 0),
+        CONSTRAINT chk_goals_period CHECK (ends_on >= starts_on),
+        CONSTRAINT fk_goals_created_by FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
+  {
+    table: 'goal_members',
+    sql: `
+      CREATE TABLE IF NOT EXISTS goal_members (
+        goal_id  INT UNSIGNED  NOT NULL,
+        user_id  INT UNSIGNED  NOT NULL,
+
+        PRIMARY KEY (goal_id, user_id),
+        KEY idx_goal_members_user (user_id),
+        CONSTRAINT fk_goal_members_goal FOREIGN KEY (goal_id) REFERENCES goals (id) ON DELETE CASCADE,
+        CONSTRAINT fk_goal_members_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
+  {
+    table: 'admin_alerts',
+    sql: `
+      CREATE TABLE IF NOT EXISTS admin_alerts (
+        id            INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+        kind          ENUM('deal_won', 'deal_lost') NOT NULL,
+        deal_id       INT UNSIGNED  NULL,
+        actor_id      INT UNSIGNED  NULL COMMENT 'Quem moveu o negócio (não é alarmado)',
+        title         VARCHAR(200)  NOT NULL,
+        body          TEXT          NOT NULL,
+        details       JSON          NULL,
+        needs_ack     TINYINT(1)    NOT NULL DEFAULT 0 COMMENT '1 = repete a notificação até um admin confirmar',
+        ack_token     CHAR(43)      NULL COMMENT 'Confirmação pelo botão da notificação (sem sessão)',
+        acked_at      DATETIME      NULL,
+        acked_by      INT UNSIGNED  NULL,
+        push_count    INT UNSIGNED  NOT NULL DEFAULT 0,
+        last_push_at  DATETIME      NULL,
+        created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_alert_token (ack_token),
+        KEY idx_alerts_pending (needs_ack, acked_at, created_at),
+        CONSTRAINT fk_alerts_deal FOREIGN KEY (deal_id) REFERENCES deals (id) ON DELETE SET NULL,
+        CONSTRAINT fk_alerts_actor FOREIGN KEY (actor_id) REFERENCES users (id) ON DELETE SET NULL,
+        CONSTRAINT fk_alerts_acked_by FOREIGN KEY (acked_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
 ];
 
 /**
@@ -473,6 +601,24 @@ const COLUMN_MIGRATIONS = [
       ALTER TABLE meetings
         ADD COLUMN remind_day_sent_at DATETIME NULL COMMENT 'Lembrete do dia enviado (ou dispensado)' AFTER status,
         ADD COLUMN remind_hour_sent_at DATETIME NULL COMMENT 'Lembrete de 1h antes enviado (ou dispensado)' AFTER remind_day_sent_at
+    `,
+  },
+  {
+    table: 'deals',
+    column: 'pains',
+    name: 'deals: dados de negociação, fecho (sistema, prazo) e mensalidade',
+    sql: `
+      ALTER TABLE deals
+        ADD COLUMN pains TEXT NULL COMMENT 'Em Negociação: dores do cliente' AFTER meeting_at,
+        ADD COLUMN proposal_offer TEXT NULL COMMENT 'Em Negociação: proposta real' AFTER pains,
+        ADD COLUMN bait TEXT NULL COMMENT 'Em Negociação: isca do vendedor' AFTER proposal_offer,
+        ADD COLUMN final_proposal TEXT NULL COMMENT 'Aguardando Resposta: proposta final apresentada' AFTER bait,
+        ADD COLUMN won_scope TEXT NULL COMMENT 'Cliente Fechado: sistema a fazer' AFTER final_proposal,
+        ADD COLUMN delivery_due DATE NULL COMMENT 'Cliente Fechado: prazo de entrega' AFTER won_scope,
+        ADD COLUMN monthly_value DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT 'Mensalidade combinada (0 = sem mensalidade)' AFTER delivery_due,
+        ADD COLUMN monthly_start DATE NULL COMMENT '1.º mês da mensalidade (dia 1)' AFTER monthly_value,
+        ADD COLUMN monthly_end DATE NULL COMMENT 'Último mês da mensalidade (dia 1); NULL = em curso' AFTER monthly_start,
+        ADD COLUMN closing_rate DECIMAL(5,2) NULL COMMENT '% de comissão do fecho (fixada ao fechar)' AFTER monthly_end
     `,
   },
 ];

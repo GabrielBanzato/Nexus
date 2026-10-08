@@ -218,6 +218,25 @@ export const deleteDeal = (id) => request(`/api/deals/${id}`, { method: 'DELETE'
 /** Move para "Reunião Agendada" e (se notify) confirma ao cliente por WhatsApp. Devolve { data, meta.notification }. */
 export const scheduleMeeting = (body) => request('/api/pipeline/schedule-meeting', json('POST', body));
 
+// Avisos do pipeline ao admin (fecho por confirmar)
+export const getPendingAlerts = () => request('/api/alerts/pending').then(unwrap);
+export const ackAlert = (id) => request(`/api/alerts/${id}/ack`, { method: 'POST' }).then(unwrap);
+
+// Painel do admin: contratos, comissões do mês e mensalidades (month = 'YYYY-MM')
+export const listContracts = () => request('/api/contracts').then(unwrap);
+export const saveContract = (userId, body) => request(`/api/contracts/${userId}`, json('PUT', body)).then(unwrap);
+export const getCommissions = (month) => request(`/api/commissions${qs({ month })}`).then(unwrap);
+export const listSubscriptions = (month) => request(`/api/subscriptions${qs({ month })}`).then(unwrap);
+export const markPaid = (dealId, month, amount) =>
+  request(`/api/subscriptions/${dealId}/payments/${month}`, json('PUT', amount === undefined ? {} : { amount })).then(unwrap);
+export const unmarkPaid = (dealId, month) => request(`/api/subscriptions/${dealId}/payments/${month}`, { method: 'DELETE' });
+
+// Metas / Piso
+export const listGoals = (params) => request(`/api/goals${qs(params)}`).then(unwrap);
+export const createGoal = (body) => request('/api/goals', json('POST', body)).then(unwrap);
+export const updateGoal = (id, body) => request(`/api/goals/${id}`, json('PATCH', body)).then(unwrap);
+export const archiveGoal = (id) => request(`/api/goals/${id}`, { method: 'DELETE' });
+
 // Métricas
 export const getPerformance = (params) => request(`/api/metrics/performance${qs(params)}`);
 /** Prospecção hoje/esta semana. `today`/`week`: inícios das janelas no fuso local (ISO). */

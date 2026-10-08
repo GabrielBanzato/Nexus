@@ -15,8 +15,12 @@ import { createOllamaClient } from './services/ollamaClient.js';
 import { createWhatsAppClient } from './services/whatsappClient.js';
 import { publicOrigin } from './repositories/meetingRepository.js';
 import { createPushService } from './services/pushNotifications.js';
+import { createAdminAlerts } from './services/adminAlerts.js';
 import { createOwnMessageHandler, createWhatsAppInbox } from './services/whatsappInbox.js';
 import activityLogRoutes from './routes/activityLogRoutes.js';
+import alertRoutes, { publicAlertRoutes } from './routes/alertRoutes.js';
+import contractRoutes from './routes/contractRoutes.js';
+import goalRoutes from './routes/goalRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
 import dealRoutes from './routes/dealRoutes.js';
@@ -169,10 +173,17 @@ export async function buildApp() {
   app.decorate('meetingReminders', reminders);
   app.addHook('onClose', async () => reminders.stop());
 
+  // Avisos do pipeline ao admin: cliente fechado (insiste até confirmar) e negócio perdido.
+  const adminAlerts = createAdminAlerts({ io, push, logger: app.log.child({ module: 'alerts' }) });
+  app.decorate('adminAlerts', adminAlerts);
+  app.addHook('onClose', async () => adminAlerts.stop());
+
   // Login (público) + /me, troca de senha e registo (protegidos internamente).
   await app.register(authRoutes);
   // Página da sala para o convidado (público, com limite por IP).
   await app.register(publicMeetingRoutes);
+  // Botão "Recebi e vi" da notificação (token do próprio aviso, sem sessão).
+  await app.register(publicAlertRoutes);
 
   // Rotas protegidas: tudo registrado neste contexto exige JWT válido de um utilizador ativo.
   await app.register(async (protectedApp) => {
@@ -193,6 +204,10 @@ export async function buildApp() {
     await protectedApp.register(triageRoutes);
     await protectedApp.register(dealRoutes);
     await protectedApp.register(metricsRoutes);
+    await protectedApp.register(goalRoutes);
+    await protectedApp.register(alertRoutes);
+    // Painel do admin: contratos, comissões e mensalidades
+    await protectedApp.register(contractRoutes);
     await protectedApp.register(timelineRoutes);
 
     // Tempo real (Server-Sent Events)
@@ -239,6 +254,7 @@ async function start() {
     app.whatsapp?.start();
     // Depois do banco pronto (as colunas dos lembretes vêm das migrações).
     app.meetingReminders.start();
+    app.adminAlerts.start();
     // Idem para a IA: baixa o modelo na primeira vez (~1,9 GB) e deixa-o carregado na RAM.
     if (app.ai.enabled) app.ai.ollama.warmup();
   } catch (err) {

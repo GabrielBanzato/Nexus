@@ -1,6 +1,7 @@
 /* Nexus: service worker do app instalado (PWA).
  *
- *  - Notificações (Web Push): mensagem nova na Central, lembretes de reunião, aviso de QR.
+ *  - Notificações (Web Push): mensagem nova na Central, lembretes de reunião, aviso de QR e,
+ *    para o admin, cliente fechado (fica no ecrã, vibra e repete até "Recebi e vi") e perdido.
  *    Não mostra se o Nexus já estiver aberto e à frente (aí o próprio app avisa).
  *  - Cache só do que é seguro: os ficheiros com hash (/assets/*, imutáveis) e os ícones. A API e
  *    o index.html vêm sempre da rede (dados sempre frescos, deploys novos chegam na hora); sem
@@ -77,7 +78,10 @@ self.addEventListener('push', (event) => {
         badge: '/icons/badge-96.png',
         tag: data.tag, // a mesma conversa substitui a notificação anterior em vez de empilhar
         renotify: Boolean(data.tag),
-        data: { url: data.url || '/' },
+        requireInteraction: Boolean(data.requireInteraction),
+        vibrate: data.vibrate,
+        actions: data.actions,
+        data: { url: data.url || '/', ackUrl: data.ackUrl },
       });
     })(),
   );
@@ -85,6 +89,12 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  // "✓ Recebi e vi" (cliente fechado): confirma sem abrir o app; o servidor pára de repetir.
+  const ackUrl = event.notification.data?.ackUrl;
+  if (event.action === 'ack' && ackUrl) {
+    event.waitUntil(fetch(new URL(ackUrl, self.location.origin).href, { method: 'POST' }).catch(() => {}));
+    return;
+  }
   const target = new URL(event.notification.data?.url || '/', self.location.origin).href;
   event.waitUntil(
     (async () => {

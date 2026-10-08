@@ -2,7 +2,7 @@ import { publish } from '../lib/events.js';
 import { notFound } from '../lib/errors.js';
 import { isAdmin, requireRole } from '../plugins/auth.js';
 import { logActivity } from '../repositories/activityLogRepository.js';
-import { DIRECT_STAGES } from '../repositories/dealRepository.js';
+import { CREATE_STAGES } from '../repositories/dealRepository.js';
 import {
   TRIAGE_VIEWS,
   archiveLead,
@@ -95,7 +95,7 @@ const decisionSchema = {
           title: { type: 'string', minLength: 2, maxLength: 200 },
           value: { type: 'number', minimum: 0, maximum: 9_999_999_999.99 },
           owner_id: { type: 'integer', minimum: 1 },
-          stage: { type: 'string', enum: DIRECT_STAGES }, // "meeting" só via agendamento
+          stage: { type: 'string', enum: CREATE_STAGES }, // os outros estágios pedem dados num pop-up (só movendo)
           expected_close_date: { type: ['string', 'null'], format: 'date' },
         },
       },

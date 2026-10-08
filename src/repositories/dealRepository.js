@@ -11,7 +11,16 @@ export const OPEN_STAGES = ['lead', 'meeting', 'negotiation', 'awaiting'];
  * confirmação por WhatsApp): só via POST /api/pipeline/schedule-meeting.
  */
 export const DIRECT_STAGES = OPEN_STAGES.filter((stage) => stage !== 'meeting');
+/**
+ * Onde um negócio pode NASCER (criar / qualificar na Triagem). Os estágios seguintes pedem dados
+ * num pop-up ao entrar (dores e proposta, proposta final, fecho), por isso só se chega lá movendo.
+ */
+export const CREATE_STAGES = ['lead'];
 export const DEAL_FIELDS = ['title', 'company', 'contact_name', 'phone', 'email', 'value', 'owner_id', 'client_id', 'expected_close_date'];
+/** Respostas dos pop-ups do pipeline (editáveis depois no detalhe). */
+export const DEAL_DETAIL_FIELDS = ['pains', 'proposal_offer', 'bait', 'final_proposal', 'won_scope', 'delivery_due'];
+/** Mensalidade: mexe nas comissões, por isso fora do pop-up de fecho só o admin altera. */
+export const DEAL_BILLING_FIELDS = ['monthly_value', 'monthly_start', 'monthly_end'];
 
 /** Probabilidade de fecho por estágio, para a previsão ponderada do pipeline. */
 export const STAGE_PROBABILITY = { lead: 0.1, meeting: 0.25, negotiation: 0.4, awaiting: 0.6, won: 1, lost: 0 };
@@ -90,17 +99,21 @@ export async function updateDeal(id, fields) {
  *  - → won:  won_at; cria o cliente conquistado (ou reativa o associado); lead → FECHADO.
  *  - → lost: lost_at + motivo.
  *  - won/lost → estágio aberto: reabre (limpa carimbos e motivo).
+ * `fields`: respostas do pop-up do estágio (dores, proposta, sistema/prazo/mensalidade...).
  * `afterMove(trx, row)` (opcional) roda no fim, na mesma transação (ex.: atualizar a triagem).
  * @returns {Promise<{ deal, from, to, clientCreatedId: number|null }>}
  */
-export async function moveDeal(id, { stage, position, lostReason }, afterMove) {
+export async function moveDeal(id, { stage, position, lostReason, fields = {} }, afterMove) {
   const { from, to, extra } = await board.move(id, { column: stage, position }, async (trx, { row, from: f, to: t }) => {
-    const changes = {};
+    const changes = { ...fields };
     let clientCreatedId = null;
     if (f.column !== t.column) changes.stage_changed_at = db.fn.now();
 
     if (t.column === 'won' && f.column !== 'won') {
-      Object.assign(changes, { won_at: db.fn.now(), lost_at: null, lost_reason: null });
+      // % de comissão do contrato do vendedor NESTE momento: mudar o contrato depois não mexe
+      // nas vendas já fechadas.
+      const contract = row.owner_id ? await trx('user_contracts').where({ user_id: row.owner_id }).first('closing_rate') : null;
+      Object.assign(changes, { won_at: db.fn.now(), lost_at: null, lost_reason: null, closing_rate: contract ? contract.closing_rate : null });
       let clientId = row.client_id;
       if (clientId) {
         await trx('clients').where({ id: clientId }).update({ status: 'active' });
@@ -123,7 +136,7 @@ export async function moveDeal(id, { stage, position, lostReason }, afterMove) {
     } else if (t.column === 'lost' && lostReason !== undefined) {
       changes.lost_reason = lostReason;
     } else if (OPEN_STAGES.includes(t.column) && !OPEN_STAGES.includes(f.column)) {
-      Object.assign(changes, { won_at: null, lost_at: null, lost_reason: null });
+      Object.assign(changes, { won_at: null, lost_at: null, lost_reason: null, closing_rate: null });
     }
 
     if (Object.keys(changes).length) await trx('deals').where({ id }).update(changes);

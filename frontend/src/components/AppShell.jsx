@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, Building2, Filter, Handshake, LogOut, MessagesSquare, Radar, SquareKanban, Ticket, Users } from 'lucide-react';
+import { BarChart3, Building2, FileSignature, Filter, Handshake, LogOut, MessagesSquare, Radar, SquareKanban, Ticket, Trophy, Users } from 'lucide-react';
 import Dashboard from '../Dashboard.jsx';
 import AttendancePage from '../pages/AttendancePage.jsx';
 import ClientsPage from '../pages/ClientsPage.jsx';
+import ContractsPage from '../pages/ContractsPage.jsx';
+import FloorPage from '../pages/FloorPage.jsx';
 import KanbanPage from '../pages/KanbanPage.jsx';
 import PerformancePage from '../pages/PerformancePage.jsx';
 import PipelinePage from '../pages/PipelinePage.jsx';
@@ -15,6 +17,7 @@ import { useHashRoute } from '../lib/useHashRoute.js';
 import { useLiveUpdates } from '../lib/useLiveUpdates.js';
 import { useSocketEvent } from '../lib/socket.js';
 import { useToast } from './toast.jsx';
+import AdminAlarm from './AdminAlarm.jsx';
 import { AppSetupIconButton, AppSetupModal, AppSetupSidebarButton, InstallBanner, useAppSetup } from './AppSetup.jsx';
 import { Avatar, Badge, IconButton, Spinner, cx } from './ui.jsx';
 
@@ -32,6 +35,8 @@ const GROUPS = [
       { path: 'pipeline', label: 'Pipeline', icon: Handshake, element: PipelinePage, wide: true },
       // Aberto a todos: o ranking da equipe é visível para fomentar a competição saudável.
       { path: 'desempenho', label: 'Desempenho', icon: BarChart3, element: PerformancePage },
+      // Metas vistas de cima: cada um vê as metas em que participa.
+      { path: 'piso', label: 'Piso', icon: Trophy, element: FloorPage },
     ],
   },
   {
@@ -52,7 +57,11 @@ const GROUPS = [
   {
     label: 'Administração',
     adminOnly: true, // criar contas e senhas é exclusivo dos administradores
-    routes: [{ path: 'equipe', label: 'equipe', icon: Users, element: TeamPage }],
+    routes: [
+      { path: 'equipe', label: 'equipe', icon: Users, element: TeamPage },
+      // Contratos (comissões), mensalidades e metas: só o admin.
+      { path: 'contratos', label: 'Contratos e metas', icon: FileSignature, element: ContractsPage },
+    ],
   },
 ];
 
@@ -245,6 +254,8 @@ export default function AppShell() {
         </div>
       </main>
       <AppSetupModal open={setupOpen} onClose={() => setSetupOpen(false)} setup={appSetup} />
+      {/* Admin: cliente fechado (alarme até confirmar) e negócio perdido, em qualquer página. */}
+      {isAdmin && <AdminAlarm enabled />}
     </div>
   );
 }

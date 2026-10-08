@@ -3,9 +3,11 @@ import { AppError, forbidden, notFound } from '../lib/errors.js';
 import { isAdmin, requireRole } from '../plugins/auth.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
 import {
+  CREATE_STAGES,
+  DEAL_BILLING_FIELDS,
+  DEAL_DETAIL_FIELDS,
   DEAL_FIELDS,
   DEAL_STAGES,
-  DIRECT_STAGES,
   createDeal,
   deleteDeal,
   findDealById,
@@ -30,6 +32,21 @@ const dealProperties = {
   expected_close_date: { type: ['string', 'null'], format: 'date' },
 };
 
+const longText = { type: ['string', 'null'], maxLength: 4000 };
+const firstOfMonth = { type: ['string', 'null'], format: 'date', pattern: '-01$' }; // mês = dia 1
+// Respostas dos pop-ups (dores/proposta/isca, proposta final, fecho) e mensalidade.
+const detailProperties = {
+  pains: longText,
+  proposal_offer: longText,
+  bait: longText,
+  final_proposal: longText,
+  won_scope: longText,
+  delivery_due: { type: ['string', 'null'], format: 'date' },
+  monthly_value: { type: 'number', minimum: 0, maximum: 9_999_999.99 },
+  monthly_start: firstOfMonth,
+  monthly_end: firstOfMonth,
+};
+
 const boardSchema = {
   querystring: {
     type: 'object',
@@ -47,13 +64,13 @@ const createSchema = {
     type: 'object',
     required: ['title'],
     additionalProperties: false,
-    properties: { ...dealProperties, stage: { type: 'string', enum: DIRECT_STAGES, default: 'lead' }, lead_id: nullableId },
+    properties: { ...dealProperties, stage: { type: 'string', enum: CREATE_STAGES, default: 'lead' }, lead_id: nullableId },
   },
 };
 
 const updateSchema = {
   params: idParam,
-  body: { type: 'object', additionalProperties: false, minProperties: 1, properties: dealProperties },
+  body: { type: 'object', additionalProperties: false, minProperties: 1, properties: { ...dealProperties, ...detailProperties } },
 };
 
 const moveSchema = {
@@ -66,6 +83,8 @@ const moveSchema = {
       stage: { type: 'string', enum: DEAL_STAGES },
       position: { type: 'integer', minimum: 0 }, // omitido = fim do estágio
       lost_reason: { type: ['string', 'null'], maxLength: 255 },
+      value: dealProperties.value, // valor negociado (pop-up de fecho / proposta final)
+      ...detailProperties,
     },
   },
 };
@@ -87,6 +106,47 @@ const MEETING_PAST_TOLERANCE_MS = 5 * 60_000; // relógios ligeiramente desacert
 const MEETING_MAX_AHEAD_MS = 366 * 24 * 60 * 60_000;
 
 const pick = (source, fields) => Object.fromEntries(fields.filter((f) => source[f] !== undefined).map((f) => [f, source[f]]));
+const filled = (text) => typeof text === 'string' && text.trim().length > 0;
+const trimOrNull = (text) => (filled(text) ? text.trim() : null);
+
+const stageError = (message) => new AppError(422, 'STAGE_DETAILS_REQUIRED', message);
+
+/**
+ * Dados pedidos pelo pop-up de cada estágio, ao ENTRAR nele (reordenar na mesma coluna não pede).
+ * Devolve os campos a gravar com o movimento; lança 422 se faltar algo obrigatório.
+ */
+function stageFields(stage, body) {
+  switch (stage) {
+    case 'negotiation':
+      if (!filled(body.pains) || !filled(body.proposal_offer) || !filled(body.bait)) {
+        throw stageError('Para passar a "Em Negociação", conte as dores do cliente, a proposta real e a isca.');
+      }
+      return { pains: body.pains.trim(), proposal_offer: body.proposal_offer.trim(), bait: body.bait.trim() };
+    case 'awaiting':
+      if (!filled(body.final_proposal)) throw stageError('Para passar a "Aguardando Resposta", indique a proposta final apresentada.');
+      return { final_proposal: body.final_proposal.trim(), ...(body.value !== undefined ? { value: body.value } : {}) };
+    case 'won': {
+      if (!filled(body.won_scope) || !(body.value > 0) || !body.delivery_due) {
+        throw stageError('Para fechar o cliente, indique o sistema a fazer, o valor negociado e o prazo.');
+      }
+      const monthly = body.monthly_value ?? 0;
+      if (monthly > 0 && !body.monthly_start) throw stageError('Indique o mês da primeira mensalidade.');
+      return {
+        won_scope: body.won_scope.trim(),
+        value: body.value,
+        delivery_due: body.delivery_due,
+        monthly_value: monthly,
+        monthly_start: monthly > 0 ? body.monthly_start : null,
+        monthly_end: null,
+      };
+    }
+    case 'lost':
+      if (!filled(body.lost_reason)) throw stageError('Indique o motivo da perda.');
+      return {};
+    default:
+      return {};
+  }
+}
 
 /**
  * Privacidade: fora do admin, cada um só acessa os negócios de que é dono.
@@ -136,13 +196,18 @@ export default async function dealRoutes(app) {
       throw forbidden('Apenas o admin pode transferir um negócio para outra pessoa.');
     }
 
-    const fields = pick(request.body, DEAL_FIELDS);
+    if (!isAdmin(user) && DEAL_BILLING_FIELDS.some((f) => request.body[f] !== undefined)) {
+      throw forbidden('Só o admin altera a mensalidade de um negócio fechado.');
+    }
+
+    const fields = pick(request.body, [...DEAL_FIELDS, ...DEAL_DETAIL_FIELDS, ...DEAL_BILLING_FIELDS]);
+    for (const f of DEAL_DETAIL_FIELDS) if (typeof fields[f] === 'string') fields[f] = trimOrNull(fields[f]);
     const deal = await updateDeal(before.id, fields);
     await logActivity(request, {
       action: 'deal.update',
       entityType: 'deal',
       entityId: deal.id,
-      details: diff(before, fields, DEAL_FIELDS),
+      details: diff(before, fields, [...DEAL_FIELDS, ...DEAL_DETAIL_FIELDS, ...DEAL_BILLING_FIELDS]),
     });
     publish('deals', request);
     return { data: deal };
@@ -152,13 +217,16 @@ export default async function dealRoutes(app) {
   app.patch('/api/deals/:id/move', { schema: moveSchema }, async (request) => {
     const before = await findAccessibleDeal(request.currentUser, request.params.id);
 
-    const { stage, position, lost_reason: lostReason } = request.body;
+    const { stage, position } = request.body;
     // Entrar em "Reunião Agendada" exige data/hora e envia confirmação: só pela rota própria.
     // Reordenar dentro da própria coluna continua a passar por aqui.
     if (stage === 'meeting' && before.stage !== 'meeting') {
       throw new AppError(422, 'MEETING_REQUIRES_SCHEDULE', 'Para mover para "Reunião Agendada", indique a data e a hora da reunião.');
     }
-    const { deal, from, to, clientCreatedId } = await moveDeal(before.id, { stage, position, lostReason });
+    const entering = stage !== before.stage;
+    const fields = entering ? stageFields(stage, request.body) : {};
+    const lostReason = entering && stage === 'lost' ? request.body.lost_reason.trim() : undefined;
+    const { deal, from, to, clientCreatedId } = await moveDeal(before.id, { stage, position, lostReason, fields });
 
     if (from.column !== to.column) {
       const action = to.column === 'won' ? 'deal.won' : to.column === 'lost' ? 'deal.lost' : 'deal.stage';
@@ -168,6 +236,9 @@ export default async function dealRoutes(app) {
         entityId: deal.id,
         details: { from: from.column, to: to.column, value: deal.value, lost_reason: deal.lost_reason ?? undefined },
       });
+      // Admin avisado no telemóvel: fecho (repete até confirmar) e perda (com o motivo).
+      if (to.column === 'won') await app.adminAlerts?.dealWon(deal, request.currentUser);
+      if (to.column === 'lost') await app.adminAlerts?.dealLost(deal, request.currentUser);
       if (clientCreatedId) {
         await logActivity(request, {
           action: 'client.create',

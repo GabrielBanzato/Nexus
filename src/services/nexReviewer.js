@@ -113,6 +113,9 @@ export function toParagraphs(rewrite, originalParagraphs) {
 }
 
 const CACHE_SIZE = 600;
+const LONG_TEXT = 450; // acima disto: só a correção (sem reformular a mensagem inteira)
+const MIN_STEP_MS = 12_000; // tempo mínimo para ainda tentar corrigir mais um parágrafo
+const REWRITE_MIN_MS = 25_000; // e para ainda tentar a reformulação
 
 /** Tokens para as duas versões: ~1 token a cada 3 caracteres, cada versão do tamanho do original. */
 const budget = (text) => Math.min(Math.ceil(text.length / 3) * 2 + 140, 2400);
@@ -182,13 +185,21 @@ export function createNexReviewer({ ollama, logger }) {
   }
 
   return {
-    /** @returns {Promise<{ language: string, corrected: string, rewrite: string, ms: number }>} */
-    async review(text) {
+    /**
+     * `deadline` (ms): se o tempo estiver a acabar (fila do modelo ocupada, texto longo), entrega o
+     * que já tem — os parágrafos que faltam ficam como estão e a reformulação é saltada — em vez
+     * de falhar tudo. Texto longo (> LONG_TEXT) só leva a correção: a reformulação da mensagem
+     * inteira era o passo mais caro e quase nunca é usada numa mensagem longa já pensada.
+     * @returns {Promise<{ language: string, corrected: string, rewrite: string, ms: number, partial: boolean }>}
+     */
+    async review(text, { deadline = Infinity } = {}) {
       const lang = detectLanguage(text); // pelo texto todo: um parágrafo curto engana a deteção
       const paragraphs = splitParagraphs(text);
       const started = Date.now();
+      const timeLeft = () => deadline - Date.now();
       let corrected;
       let rewrite;
+      let partial = false;
 
       if (paragraphs.length === 1) {
         // Caso comum no chat: um pedido só, com as duas versões.
@@ -199,18 +210,28 @@ export function createNexReviewer({ ollama, logger }) {
         // Correção parágrafo a parágrafo (em série: o Ollama do VPS gera uma de cada vez)...
         const fixed = [];
         for (const p of paragraphs) {
+          if (timeLeft() < MIN_STEP_MS) {
+            partial = true;
+            fixed.push(p);
+            continue;
+          }
           const data = await cached('corrected', p, lang, () => ask(p, lang, ['corrected']));
           fixed.push(keepFormatting(p, oneParagraph(data.corrected)) || p);
         }
         corrected = fixed.join('\n\n');
         // ...e a sugestão da mensagem inteira (coerente), redistribuída pelos mesmos parágrafos.
-        const data = await cached('rewrite', text, lang, () => ask(text, lang, ['rewrite']));
-        rewrite = keepFormatting(text, toParagraphs(String(data.rewrite ?? '').replace(/\\r?\\n/g, '\n'), paragraphs));
+        if (text.length <= LONG_TEXT && timeLeft() >= REWRITE_MIN_MS) {
+          const data = await cached('rewrite', text, lang, () => ask(text, lang, ['rewrite']));
+          rewrite = keepFormatting(text, toParagraphs(String(data.rewrite ?? '').replace(/\\r?\\n/g, '\n'), paragraphs));
+        } else {
+          if (text.length <= LONG_TEXT) partial = true;
+          rewrite = corrected;
+        }
       }
       if (!usableRewrite(text, rewrite, lang)) rewrite = corrected;
 
-      const result = { language: lang, corrected, rewrite, ms: Date.now() - started };
-      logger.info({ chars: text.length, paragraphs: paragraphs.length, lang, ms: result.ms }, 'Nex: mensagem revista');
+      const result = { language: lang, corrected, rewrite, ms: Date.now() - started, partial };
+      logger.info({ chars: text.length, paragraphs: paragraphs.length, lang, ms: result.ms, partial }, 'Nex: mensagem revista');
       return result;
     },
   };

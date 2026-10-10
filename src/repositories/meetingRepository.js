@@ -93,6 +93,39 @@ export function listUpcomingMeetings({ hostUserId, clientId, limit = 50 } = {}) 
 }
 
 /**
+ * Agenda da equipe (todos veem): reuniões marcadas entre `from` e `to`, de qualquer pessoa e
+ * em qualquer estado (as encerradas aparecem como histórico do dia). O nome do cliente vem da
+ * sala ou, se faltar, do negócio.
+ */
+export function listAgenda({ from, to, hostUserId }) {
+  const query = db('meetings as m')
+    .leftJoin('users as h', 'h.id', 'm.host_user_id')
+    .leftJoin('clients as c', 'c.id', 'm.client_id')
+    .leftJoin('deals as d', 'd.id', 'm.deal_id')
+    .whereNotNull('m.scheduled_at')
+    .where('m.scheduled_at', '>=', from)
+    .where('m.scheduled_at', '<', to)
+    .orderBy('m.scheduled_at')
+    .limit(500)
+    .select(
+      'm.id',
+      'm.code',
+      'm.title',
+      'm.scheduled_at',
+      'm.status',
+      'm.host_user_id',
+      'h.name as host_name',
+      'm.client_id',
+      db.raw('COALESCE(c.name, d.contact_name) AS client_name'),
+      db.raw('COALESCE(c.company, d.company) AS company'),
+      'm.deal_id',
+      'd.stage as deal_stage',
+    );
+  if (hostUserId) query.where('m.host_user_id', hostUserId);
+  return query;
+}
+
+/**
  * Salas marcadas nas próximas `withinMs` com algum lembrete por enviar. Reunião de negócio só
  * conta enquanto o negócio está em "Reunião Agendada" (moveu-se ou perdeu-se: sem lembretes).
  * O cliente vem da sala ou, se faltar, do negócio.

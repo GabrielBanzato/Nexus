@@ -70,10 +70,11 @@ export function useNexReview(text) {
     /** O consultor escolheu a versão do Nex: esse texto já está revisto, pode enviar logo. */
     accept: (value) => setReview((prev) => (prev ? { ...prev, text: value.trim() } : prev)),
     /** Texto escrito pelo próprio Nex (sugestão de resposta): não precisa de nova revisão. */
-    trust: (value) => {
+    /** `source`: 'nex' (sugestão de resposta) | 'template' (mensagem padrão de primeiro contato). */
+    trust: (value, source = 'nex') => {
       clearTimeout(timer.current);
       controller.current?.abort();
-      setReview(value.trim() ? { text: value.trim(), status: 'trusted' } : null);
+      setReview(value.trim() ? { text: value.trim(), status: 'trusted', source } : null);
     },
     reset: () => {
       clearTimeout(timer.current);
@@ -153,7 +154,9 @@ export function NexReviewCard({ nex, text, onUse }) {
   if (review.status === 'trusted') {
     return (
       <p className="mb-2 flex items-center gap-1.5 rounded-xl bg-violet-950/30 px-3 py-2 text-xs text-violet-200 ring-1 ring-violet-900/60" role="status">
-        <Check className="size-3.5" /> Texto escrito pelo <strong className="font-semibold">Nex</strong>: já revisto, pode enviar.
+        <Check className="size-3.5" />
+        {review.source === 'template' ? 'Mensagem padrão da Nexus' : <span>Texto escrito pelo <strong className="font-semibold">Nex</strong></span>}: já revisada, pode enviar.
+        {review.source === 'template' && ' Se editar, o Nex revisa de novo.'}
       </p>
     );
   }

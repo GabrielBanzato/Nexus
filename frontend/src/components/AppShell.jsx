@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { BarChart3, Building2, FileSignature, Filter, Handshake, LogOut, MessagesSquare, Radar, SquareKanban, Ticket, Trophy, Users } from 'lucide-react';
+import { BarChart3, Building2, CalendarDays, FileSignature, Filter, Handshake, LogOut, MessagesSquare, Radar, SquareKanban, Ticket, Trophy, Users } from 'lucide-react';
 import Dashboard from '../Dashboard.jsx';
+import AgendaPage from '../pages/AgendaPage.jsx';
 import AttendancePage from '../pages/AttendancePage.jsx';
 import ClientsPage from '../pages/ClientsPage.jsx';
 import ContractsPage from '../pages/ContractsPage.jsx';
@@ -44,6 +45,8 @@ const GROUPS = [
     routes: [
       // Todos os papéis: o servidor só devolve os clientes de que cada um é responsável.
       { path: 'atendimento', label: 'Central de Atendimento', icon: MessagesSquare, element: AttendancePage, wide: true },
+      // Todas as reuniões marcadas, da equipe inteira (todos veem).
+      { path: 'agenda', label: 'Agenda', icon: CalendarDays, element: AgendaPage, wide: true },
     ],
   },
   {

@@ -224,6 +224,7 @@ export const resetWhatsApp = () => request('/api/whatsapp/reset', { method: 'POS
 // Videochamadas (salas na plataforma)
 /** Cria a sala (agora ou com scheduled_at). Devolve { data, meta.notification } (notify: envio ao cliente). */
 export const createMeeting = (body) => request('/api/meetings', json('POST', body));
+export const listAgenda = (params) => request(`/api/agenda${qs(params)}`).then(unwrap);
 export const listMeetings = (params) => request(`/api/meetings${qs(params)}`).then(unwrap);
 export const endMeeting = (id) => request(`/api/meetings/${id}/end`, { method: 'POST' }).then(unwrap);
 /** Link da sala a partir do endereço atual (vale em dev, no Docker e no túnel). */

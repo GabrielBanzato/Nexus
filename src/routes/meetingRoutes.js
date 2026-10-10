@@ -2,7 +2,7 @@ import { AppError, notFound } from '../lib/errors.js';
 import { isAdmin } from '../plugins/auth.js';
 import { findClientById } from '../repositories/clientRepository.js';
 import { findDealById } from '../repositories/dealRepository.js';
-import { createMeeting, findMeetingByCode, findMeetingById, learnPublicOrigin, listUpcomingMeetings, meetingLink, updateMeeting } from '../repositories/meetingRepository.js';
+import { createMeeting, findMeetingByCode, findMeetingById, learnPublicOrigin, listAgenda, listUpcomingMeetings, meetingLink, updateMeeting } from '../repositories/meetingRepository.js';
 import { logActivity } from '../repositories/activityLogRepository.js';
 import { greetingName, instantInviteText, meetingConfirmationText, sendMeetingMessage } from '../services/meetingNotifier.js';
 import { idParam } from './schemas.js';
@@ -29,6 +29,7 @@ const listSchema = {
 };
 
 const PAST_TOLERANCE_MS = 5 * 60_000;
+const AGENDA_MAX_RANGE_MS = 62 * 24 * 60 * 60_000;
 const MAX_AHEAD_MS = 366 * 24 * 60 * 60_000;
 
 const publicView = (m) => ({ code: m.code, title: m.title, host_name: m.host_name, scheduled_at: m.scheduled_at, status: m.status });
@@ -110,6 +111,31 @@ export default async function meetingRoutes(app) {
     }
     return reply.code(201).send({ data: withLink(meeting), meta: { notification } });
   });
+
+  /**
+   * Agenda: as reuniões marcadas de TODA a equipe num período (máx. ~2 meses por pedido).
+   * `mine`: só as que eu conduzo.
+   */
+  app.get(
+    '/api/agenda',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          required: ['from', 'to'],
+          additionalProperties: false,
+          properties: { from: { type: 'string', format: 'date-time' }, to: { type: 'string', format: 'date-time' }, mine: { type: 'boolean', default: false } },
+        },
+      },
+    },
+    async (request) => {
+      const from = new Date(request.query.from);
+      const to = new Date(request.query.to);
+      if (!(to > from) || to - from > AGENDA_MAX_RANGE_MS) throw new AppError(400, 'BAD_RANGE', 'Período inválido (até 62 dias).');
+      const rows = await listAgenda({ from, to, hostUserId: request.query.mine ? request.currentUser.id : undefined });
+      return { data: rows.map(withLink) };
+    },
+  );
 
   app.get('/api/meetings', { schema: listSchema }, async (request) => {
     const user = request.currentUser;

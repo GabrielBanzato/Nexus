@@ -787,6 +787,11 @@ function Composer({ disabled, onSend, signature, ai, initialText = '' }) {
   const ref = useRef(null);
   // Nex revê cada mensagem (sempre ligado): o envio só libera depois do pop-up dele aparecer.
   const nex = useNexReview(text);
+  // A abordagem do "Chamar no WhatsApp" é o texto padrão da Nexus: já sai revisada (rever a
+  // mensagem longa demorava e às vezes estourava o tempo). Editou → o Nex revê de novo.
+  useEffect(() => {
+    if (initialText.trim()) nex.trust(initialText, 'template');
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyNexVersion = (value) => {
     setText(value);

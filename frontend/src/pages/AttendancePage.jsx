@@ -6,6 +6,7 @@ import {
   endMeeting,
   getAiSuggestion,
   getClientMessages,
+  markConversationSeen,
   listConversations,
   listMeetings,
   meetingUrl,
@@ -904,6 +905,33 @@ function useAiSuggestion({ clientId, enabled, lastMessageId, suggesting }) {
   };
 }
 
+/**
+ * O vendedor está a VER a conversa (aberta e com a janela visível): marca-a como lida no
+ * WhatsApp, para o cliente ver os ✓✓ azuis. Ao abrir e a cada mensagem nova do cliente; com a
+ * janela em segundo plano espera até voltar a ficar visível.
+ */
+function useMarkSeen(clientId, lastClientMessageId, enabled) {
+  const sent = useRef(null);
+  useEffect(() => {
+    if (!enabled || !lastClientMessageId) return undefined;
+    const key = `${clientId}:${lastClientMessageId}`;
+    const send = () => {
+      if (document.visibilityState !== 'visible' || sent.current === key) return;
+      sent.current = key;
+      markConversationSeen(clientId).catch(() => {
+        sent.current = null; // tenta outra vez na próxima oportunidade
+      });
+    };
+    send();
+    document.addEventListener('visibilitychange', send);
+    window.addEventListener('focus', send);
+    return () => {
+      document.removeEventListener('visibilitychange', send);
+      window.removeEventListener('focus', send);
+    };
+  }, [clientId, lastClientMessageId, enabled]);
+}
+
 function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, draft, onBack, onOpenConnect }) {
   const { user, isAdmin } = useAuth();
   const toast = useToast();
@@ -921,6 +949,8 @@ function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, 
   const list = useMemo(() => (messages.data ? [...messages.data.pages].reverse().flatMap((p) => p.data) : []), [messages.data]);
   const lastMessageId = list.at(-1)?.id ?? null;
   const ai = useAiSuggestion({ clientId, enabled: aiEnabled, lastMessageId, suggesting: aiSuggesting });
+  const lastClientMessageId = useMemo(() => list.findLast((m) => m.sender_type === 'client')?.id ?? null, [list]);
+  useMarkSeen(clientId, lastClientMessageId, waStatus === 'ready');
 
   // ---- Scroll: fica no fundo ao chegar mensagem (se já lá estava), preserva ao carregar antigas.
   const scrollRef = useRef(null);

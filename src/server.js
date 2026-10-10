@@ -140,6 +140,7 @@ export async function buildApp() {
   // "Visto" das mensagens: evento do WhatsApp + atualização ao abrir a conversa.
   const ackSync = createAckSync({ whatsapp, io, logger: app.log.child({ module: 'acks' }) });
   app.decorate('ackSync', ackSync);
+  app.addHook('onClose', async () => ackSync.stop());
   app.addHook('onClose', async () => whatsapp?.stop());
 
   // Todo dia (7h por padrão) reinicia a ligação ao WhatsApp Web: renova o Chrome (memória) e,
@@ -292,6 +293,8 @@ async function start() {
     // Depois do banco pronto (as colunas dos lembretes vêm das migrações).
     app.meetingReminders.start();
     app.adminAlerts.start();
+    // "Visto": varre a cada 20s as conversas com mensagens enviadas ainda não lidas.
+    app.ackSync.start();
     // Idem para a IA: baixa o modelo na primeira vez (~1,9 GB) e deixa-o carregado na RAM.
     if (app.ai.enabled) app.ai.ollama.warmup();
   } catch (err) {

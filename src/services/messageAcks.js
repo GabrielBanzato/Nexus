@@ -4,20 +4,29 @@ import { findClientById } from '../repositories/clientRepository.js';
 import { messageKey, updateMessageAck } from '../repositories/messageRepository.js';
 
 const RETRY_DELAYS_MS = [2_000, 8_000];
-const REFRESH_EVERY_MS = 30_000; // por conversa
+const REFRESH_EVERY_MS = 15_000; // por conversa
+const SWEEP_EVERY_MS = 20_000; // varrimento das conversas com mensagens por ler
+const SWEEP_WINDOW_H = 24; // só mensagens enviadas nas últimas 24h
+const SWEEP_MAX_CLIENTS = 12;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** O texto enviado leva a assinatura ("*Gabriel*\nteste"); no Nexus fica só "teste". */
+const sameText = (body, content) => body === content || body.endsWith(`\n${content}`);
+
 /**
- * "Visto" das mensagens (✓ enviada · ✓✓ entregue · ✓✓ azul lida), por dois caminhos:
- *  1. Evento do WhatsApp (message_ack), na hora. O "entregue" chega em milissegundos — às vezes
- *     antes de a mensagem estar gravada —, por isso tenta outra vez uns segundos depois.
- *  2. Ao abrir uma conversa, pergunta ao WhatsApp o estado atual das últimas mensagens enviadas:
- *     corrige o que se perdeu (servidor a reiniciar, sessão a religar...).
- * As mensagens são encontradas pela parte estável do id (ver messageKey): com a migração dos
- * contactos para "@lid", o id do evento pode não ser igual ao gravado no envio.
+ * "Visto" das mensagens (✓ enviada · ✓✓ entregue · ✓✓ azul lida), sem depender só do evento do
+ * WhatsApp (que nem sempre chega):
+ *  1. Evento message_ack, na hora (com nova tentativa: o "entregue" chega às vezes antes de a
+ *     mensagem estar gravada).
+ *  2. Varrimento a cada 20s das conversas com mensagens enviadas nas últimas 24h ainda não lidas:
+ *     pergunta ao WhatsApp o estado atual. Também ao abrir uma conversa.
+ * As mensagens são encontradas pela parte estável do id (o contacto pode ter migrado para @lid)
+ * e, se a mensagem ficou sem id no envio, pelo texto (na ordem de envio).
  */
 export function createAckSync({ whatsapp, io, logger }) {
   const lastRefresh = new Map(); // clientId → instante
+  let timer = null;
+  let sweeping = false;
 
   async function emit(changed) {
     const client = await findClientById(changed.client_id);
@@ -26,8 +35,80 @@ export function createAckSync({ whatsapp, io, logger }) {
 
   async function apply(waMessageId, ack) {
     const result = await updateMessageAck(waMessageId, ack);
-    if (result.changed) await emit(result.changed);
+    if (result.changed) {
+      logger.info({ messageId: result.changed.id, ack: result.changed.ack }, 'WhatsApp: visto atualizado');
+      await emit(result.changed);
+    }
     return result.found;
+  }
+
+  /** Confere no WhatsApp o estado das últimas mensagens enviadas a este cliente. */
+  async function refresh(client, { force = false } = {}) {
+    if (!whatsapp || !client?.whatsapp_jid) return;
+    const now = Date.now();
+    if (!force && now - (lastRefresh.get(client.id) ?? 0) < REFRESH_EVERY_MS) return;
+    lastRefresh.set(client.id, now);
+    try {
+      const pending = await db('messages')
+        .where({ client_id: client.id })
+        .whereIn('sender_type', ['agent', 'bot'])
+        .where((w) => w.whereNull('ack').orWhere('ack', '<', 3))
+        .where('created_at', '>=', new Date(now - 7 * 24 * 3_600_000))
+        .orderBy('id', 'desc')
+        .limit(30)
+        .select('id', 'wa_message_id', 'content', 'created_at');
+      if (!pending.length) return;
+      const sent = await whatsapp.recentOwnMessages(client.whatsapp_jid);
+      if (!sent.length) return;
+      const byKey = new Map(sent.map((m) => [m.key, m]));
+      // Ids já ligados a mensagens deste cliente (não se reaproveitam para outra).
+      const known = new Set((await db('messages').where({ client_id: client.id }).whereNotNull('wa_message_id').pluck('wa_message_id')).map(messageKey));
+
+      for (const row of pending.filter((r) => r.wa_message_id)) {
+        const m = byKey.get(messageKey(row.wa_message_id));
+        if (m?.ack >= 1) await apply(row.wa_message_id, m.ack);
+      }
+      // Sem id (ex.: dois "teste" seguidos — o segundo ficou sem id no envio): pelo texto, na ordem
+      // de envio (a mais antiga sem id fica com a mais antiga do WhatsApp com o mesmo texto ainda
+      // não ligada). Pela ordem e não pela hora exata: não depende do fuso do relógio do MySQL.
+      const orphans = pending.filter((r) => !r.wa_message_id).sort((a, b) => a.id - b.id);
+      const candidates = [...sent].sort((a, b) => a.timestamp - b.timestamp);
+      for (const row of orphans) {
+        const match = candidates.find((m) => !known.has(m.key) && sameText(m.body, row.content));
+        if (!match) continue;
+        known.add(match.key);
+        const linked = await db('messages')
+          .where({ id: row.id })
+          .whereNull('wa_message_id')
+          .update({ wa_message_id: match.id })
+          .catch(() => 0); // id já usado noutra linha: deixa estar
+        if (linked && match.ack >= 1) await apply(match.id, match.ack);
+      }
+    } catch (err) {
+      logger.warn({ err: err.message, clientId: client.id }, 'WhatsApp: não foi possível atualizar o "visto"');
+    }
+  }
+
+  async function sweep() {
+    if (sweeping || !whatsapp) return;
+    sweeping = true;
+    try {
+      const clients = await db('messages as m')
+        .join('clients as c', 'c.id', 'm.client_id')
+        .whereIn('m.sender_type', ['agent', 'bot'])
+        .where((w) => w.whereNull('m.ack').orWhere('m.ack', '<', 3))
+        .where('m.created_at', '>=', new Date(Date.now() - SWEEP_WINDOW_H * 3_600_000))
+        .whereNotNull('c.whatsapp_jid')
+        .groupBy('c.id', 'c.whatsapp_jid')
+        .orderByRaw('MAX(m.id) DESC')
+        .limit(SWEEP_MAX_CLIENTS)
+        .select('c.id', 'c.whatsapp_jid');
+      for (const client of clients) await refresh(client);
+    } catch (err) {
+      logger.warn({ err: err.message }, 'WhatsApp: varrimento do "visto" falhou');
+    } finally {
+      sweeping = false;
+    }
   }
 
   return {
@@ -39,33 +120,20 @@ export function createAckSync({ whatsapp, io, logger }) {
         await sleep(wait);
         if (await apply(waId, ack)) return;
       }
-      logger.debug?.({ waId, ack }, 'WhatsApp: estado de uma mensagem que não está no Nexus');
     },
 
-    /** Ao abrir a conversa (no máximo a cada 30s por cliente). Nunca lança. */
-    async refresh(client) {
-      if (!whatsapp || !client?.whatsapp_jid) return;
-      const now = Date.now();
-      if (now - (lastRefresh.get(client.id) ?? 0) < REFRESH_EVERY_MS) return;
-      lastRefresh.set(client.id, now);
-      try {
-        const pending = await db('messages')
-          .where({ client_id: client.id })
-          .whereIn('sender_type', ['agent', 'bot'])
-          .whereNotNull('wa_message_id')
-          .where((w) => w.whereNull('ack').orWhere('ack', '<', 3))
-          .orderBy('id', 'desc')
-          .limit(30)
-          .select('id', 'wa_message_id');
-        if (!pending.length) return;
-        const acks = await whatsapp.recentAcks(client.whatsapp_jid);
-        for (const row of pending) {
-          const ack = acks.get(messageKey(row.wa_message_id));
-          if (ack >= 1) await apply(row.wa_message_id, ack);
-        }
-      } catch (err) {
-        logger.warn({ err: err.message, clientId: client.id }, 'WhatsApp: não foi possível atualizar o "visto"');
-      }
+    /** Ao abrir a conversa. Nunca lança. */
+    refresh,
+    sweep,
+
+    start() {
+      if (timer || !whatsapp) return;
+      timer = setInterval(() => sweep(), SWEEP_EVERY_MS);
+      timer.unref?.();
+    },
+    stop() {
+      clearInterval(timer);
+      timer = null;
     },
   };
 }

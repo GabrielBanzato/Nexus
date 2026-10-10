@@ -121,12 +121,23 @@ export default async function whatsappRoutes(app) {
    * Mesma regra de privacidade do resto do CRM: admin vê tudo; os demais só os clientes de que
    * são responsáveis (outro cliente responde 404).
    */
+  /**
+   * O vendedor está a ver a conversa no Nexus: marca-a como lida no WhatsApp (o cliente vê os
+   * ✓✓ azuis, como se alguém a tivesse aberto no telemóvel). O frontend chama ao abrir a conversa
+   * e quando chega mensagem nova com ela aberta e a janela visível.
+   */
+  app.post('/api/clients/:id/seen', { schema: { params: idParam } }, async (request) => {
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    const seen = app.whatsapp && client.whatsapp_jid ? await app.whatsapp.markSeen(client.whatsapp_jid).catch(() => false) : false;
+    return { data: { seen } };
+  });
+
   app.get('/api/clients/:id/messages', { schema: messagesSchema }, async (request) => {
     const client = await findAccessibleClient(request.currentUser, request.params.id);
     const { before, limit } = request.query;
     // Abriu a conversa: em segundo plano, confere no WhatsApp o "visto" das últimas mensagens
     // (o que mudar chega por socket). Só na página mais recente.
-    if (!before) app.ackSync?.refresh(client);
+    if (!before) app.ackSync?.refresh(client, { force: true });
     return listMessages(client.id, { before, limit });
   });
 

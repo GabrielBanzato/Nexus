@@ -132,11 +132,33 @@ export function createWhatsAppClient({
    * "@lid" o sendMessage do whatsapp-web.js (1.34.7) envia mas devolve undefined (procura a
    * mensagem por uma chave com o id antigo do contacto). Melhor esforço: null se não achar.
    */
+  /**
+   * As conversas do WhatsApp para um contacto: a do jid dado e a do outro formato (@c.us ↔ @lid)
+   * se existir. Com a migração para @lid, o mesmo contacto pode ter as duas.
+   */
+  async function chatsFor(chatId) {
+    const ids = new Set([chatId]);
+    try {
+      const [found] = (await client.getContactLidAndPhone(chatId)) ?? [];
+      if (found?.lid) ids.add(found.lid);
+      if (found?.pn) ids.add(found.pn);
+    } catch {
+      // versão do WhatsApp Web sem esta função: fica só o jid conhecido
+    }
+    const chats = [];
+    for (const id of ids) {
+      const chat = await client.getChatById(id).catch(() => null);
+      if (chat) chats.push(chat);
+    }
+    return chats;
+  }
+
   async function findSentMessageId(chatId, text) {
     try {
-      const chat = await client.getChatById(chatId);
-      const recent = await chat.fetchMessages({ limit: 10, fromMe: true });
-      return recent.reverse().find((m) => m.body === text)?.id?._serialized ?? null;
+      // As duas conversas do contacto (@c.us e @lid); a mais recente com o mesmo texto.
+      const recent = [];
+      for (const chat of await chatsFor(chatId)) recent.push(...(await chat.fetchMessages({ limit: 10, fromMe: true }).catch(() => [])));
+      return recent.filter((m) => m.body === text).sort((a, b) => b.timestamp - a.timestamp)[0]?.id?._serialized ?? null;
     } catch (err) {
       logger.warn({ err: err.message, chatId }, 'WhatsApp: não foi possível obter o id da mensagem enviada');
       return null;
@@ -409,10 +431,41 @@ export function createWhatsAppClient({
      * (id.id): Map "3EB0A1B2..." → 1 enviada, 2 entregue, 3 lida, 4 ouvida. Vazio se não der.
      */
     async recentAcks(chatId, limit = 40) {
-      if (!client || state.status !== 'ready' || !chatId) return new Map();
-      const chat = await client.getChatById(chatId);
-      const messages = await chat.fetchMessages({ limit, fromMe: true });
-      return new Map(messages.filter((m) => m.id?.id).map((m) => [m.id.id, m.ack]));
+      const messages = await this.recentOwnMessages(chatId, limit);
+      return new Map(messages.map((m) => [m.key, m.ack]));
+    },
+
+    /**
+     * Últimas mensagens que o número enviou a um contacto, procuradas nas DUAS conversas que o
+     * WhatsApp pode ter para ele (@c.us e @lid, por causa da migração de contactos): o Nexus
+     * pode ter o jid de uma e as mensagens estarem na outra.
+     * @returns {Promise<Array<{ key: string, id: string, body: string, ack: number, timestamp: number }>>}
+     */
+    async recentOwnMessages(chatId, limit = 40) {
+      if (!client || state.status !== 'ready' || !chatId) return [];
+      const byKey = new Map();
+      for (const chat of await chatsFor(chatId)) {
+        const messages = await chat.fetchMessages({ limit, fromMe: true }).catch(() => []);
+        for (const m of messages) {
+          if (!m.id?.id) continue;
+          const prev = byKey.get(m.id.id);
+          if (!prev || (m.ack ?? 0) > prev.ack) byKey.set(m.id.id, { key: m.id.id, id: m.id._serialized, body: m.body ?? '', ack: m.ack ?? 0, timestamp: m.timestamp });
+        }
+      }
+      return [...byKey.values()];
+    },
+
+    /**
+     * Marca a conversa como lida no WhatsApp: o cliente vê os ✓✓ azuis (como se alguém tivesse
+     * aberto a conversa no telemóvel). Melhor esforço: devolve se conseguiu.
+     */
+    async markSeen(chatId) {
+      if (!client || state.status !== 'ready' || !chatId) return false;
+      let ok = false;
+      for (const chat of await chatsFor(chatId)) {
+        ok = (await client.sendSeen(chat.id._serialized).catch(() => false)) || ok;
+      }
+      return ok;
     },
 
     /** "a digitar..." na conversa do cliente (melhor esforço: falhar aqui não importa). */

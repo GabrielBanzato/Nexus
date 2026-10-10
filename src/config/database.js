@@ -52,6 +52,8 @@ const SCHEMA = [
         is_hidden          TINYINT(1)     NOT NULL DEFAULT 0 COMMENT 'Oculto/arquivado (soft delete)',
         hidden_at          DATETIME       NULL,
         hidden_by          INT UNSIGNED   NULL,
+        wa_status          ENUM('yes', 'no') NULL COMMENT 'Tem WhatsApp? (checado no WhatsApp; NULL = ainda não)',
+        wa_checked_at      DATETIME       NULL,
         maps_url           VARCHAR(1000)  NULL,
         termo_busca        VARCHAR(255)   NULL,
         chave_dedupe       VARCHAR(255)   NOT NULL COMMENT 'tel:<digitos> ou na:<nome>|<endereco> normalizados',
@@ -659,6 +661,16 @@ const COLUMN_MIGRATIONS = [
     `,
   },
   {
+    table: 'leads',
+    column: 'wa_status',
+    name: 'leads: wa_status (o número tem WhatsApp?)',
+    sql: `
+      ALTER TABLE leads
+        ADD COLUMN wa_status ENUM('yes', 'no') NULL COMMENT 'Tem WhatsApp? (checado no WhatsApp; NULL = ainda não)' AFTER hidden_by,
+        ADD COLUMN wa_checked_at DATETIME NULL AFTER wa_status
+    `,
+  },
+  {
     table: 'meetings',
     column: 'nex_insights',
     name: 'meetings: nex_insights (pontos da reunião anotados pelo Nex)',
@@ -727,6 +739,14 @@ const POST_MIGRATIONS = [
   {
     name: 'lead_triage: todo lead existente entra na fila',
     sql: 'INSERT IGNORE INTO lead_triage (lead_id) SELECT id FROM leads',
+  },
+  {
+    // Contactos arquivados na Central antes de a Triagem acompanhar: o lead deles vai para
+    // "Arquivados" também. (Restaurar na Triagem tira o contacto de Arquivado, por isso repetir
+    // isto a cada arranque não desfaz nada.)
+    name: 'lead_triage: arquivar os leads cujo contacto está arquivado na Central',
+    sql: `UPDATE lead_triage t JOIN clients c ON c.lead_id = t.lead_id
+          SET t.archived_at = NOW() WHERE c.status = 'archived' AND t.archived_at IS NULL`,
   },
   {
     // Avisos de sistema do WhatsApp gravados como mensagens antes do filtro (whatsappInbox.SYSTEM_TYPES).

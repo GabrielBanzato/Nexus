@@ -79,6 +79,7 @@ export const clientSummary = (client) => ({
   status: client.status,
   responsible_id: client.responsible_id,
   responsible_name: client.responsible_name ?? null,
+  wa_linked: Boolean(client.whatsapp_jid), // já há conversa no WhatsApp (então o número tem WhatsApp)
 });
 
 /**

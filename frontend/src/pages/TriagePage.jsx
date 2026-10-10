@@ -27,6 +27,7 @@ import {
   archiveTriageLead,
   assignTriageLead,
   assignTriageLeads,
+  checkLeadsWhatsApp,
   decideTriageLead,
   distributeLeads,
   getTriageSummary,
@@ -59,6 +60,23 @@ import {
   cx,
   inputClass,
 } from '../components/ui.jsx';
+
+// Onde a pessoa estava na Triagem (só nesta aba do navegador): sai para a Central e volta igual.
+const STATE_KEY = 'nexus:triage-state';
+function readSavedState() {
+  try {
+    return JSON.parse(sessionStorage.getItem(STATE_KEY) ?? '{}') ?? {};
+  } catch {
+    return {};
+  }
+}
+function writeSavedState(state) {
+  try {
+    sessionStorage.setItem(STATE_KEY, JSON.stringify(state));
+  } catch {
+    // armazenamento bloqueado: só não lembra
+  }
+}
 
 // Leads por página (escolha de cada um, guardada neste navegador).
 const PAGE_SIZES = [25, 50, 100];
@@ -573,6 +591,8 @@ function TriageMeta({ lead }) {
       {lead.archived_at && (
         <span>Arquivado por {lead.archived_by_name ?? '—'} {formatRelative(lead.archived_at)}</span>
       )}
+      {lead.contacted_at && <span className="font-medium text-emerald-400">✓ Mensagem enviada {formatRelative(lead.contacted_at)}</span>}
+      {lead.wa_status === 'no' && <span className="font-medium text-amber-400">Sem WhatsApp: ligar</span>}
     </>
   );
 }
@@ -581,17 +601,21 @@ function TriageMeta({ lead }) {
 // Modo Lista
 // ---------------------------------------------------------------------------
 
-function LeadRow({ lead, status, isAdmin, users, selectable, selected, onToggleSelect, onDecide, onAssign, ...actions }) {
+function LeadRow({ lead, status, isAdmin, users, selectable, selected, onToggleSelect, onDecide, onAssign, onContact, highlighted, ...actions }) {
   const city = (lead.address ?? '').replace(/,?\s*\d{5}-?\d{3}\s*$/, '').split(',').slice(-1)[0]?.trim();
 
   return (
     <li
       data-triage-item
+      data-lead-id={lead.id}
       tabIndex={0}
       aria-label={`${lead.name}. Atalhos: Q qualificar, E em espera, D descartar.`}
       onKeyDown={queueKeyHandler({ lead, status, onDecide })}
       className={cx(
         'group flex flex-col gap-3 px-4 py-3.5 outline-none focus-visible:bg-neutral-800/40 focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-inset lg:flex-row lg:items-center',
+        // Já recebeu mensagem: fundo verde leve e faixa à esquerda (dá para ver de longe).
+        lead.contacted_at && 'border-l-2 border-l-emerald-600 bg-emerald-950/15',
+        highlighted && 'ring-1 ring-emerald-500/70 ring-inset',
         selected && 'bg-red-950/15',
       )}
     >
@@ -628,7 +652,7 @@ function LeadRow({ lead, status, isAdmin, users, selectable, selected, onToggleS
 
       <div className="flex flex-wrap items-center gap-2 pl-7 lg:pl-0">
         <AssigneeControl lead={lead} status={status} isAdmin={isAdmin} users={users} onAssign={onAssign} className="w-40" />
-        <WhatsAppButton lead={lead} variant="icon" />
+        <WhatsAppButton lead={lead} variant="icon" onContact={onContact} />
         <DecisionButtons lead={lead} status={status} onDecide={onDecide} />
         <LeadActions lead={lead} status={status} {...actions} />
       </div>
@@ -640,17 +664,19 @@ function LeadRow({ lead, status, isAdmin, users, selectable, selected, onToggleS
 // Modo Caixas (mesmo visual dos cards do Painel de Prospecção)
 // ---------------------------------------------------------------------------
 
-function LeadBox({ lead, status, isAdmin, users, selectable, selected, onToggleSelect, onDecide, onAssign, ...actions }) {
+function LeadBox({ lead, status, isAdmin, users, selectable, selected, onToggleSelect, onDecide, onAssign, onContact, highlighted, ...actions }) {
   return (
     <article
       data-triage-item
+      data-lead-id={lead.id}
       tabIndex={0}
       aria-label={`${lead.name}. Atalhos: Q qualificar, E em espera, D descartar.`}
       onKeyDown={queueKeyHandler({ lead, status, onDecide })}
       className={cx(
         cardClass,
         'outline-none focus-visible:ring-2 focus-visible:ring-red-700',
-        selected ? 'border-red-800 bg-red-950/10' : 'border-neutral-800',
+        selected ? 'border-red-800 bg-red-950/10' : lead.contacted_at ? 'border-emerald-800/70 bg-emerald-950/10' : 'border-neutral-800',
+        highlighted && 'ring-1 ring-emerald-500/70',
       )}
     >
       <div className="flex items-start gap-3">
@@ -688,7 +714,7 @@ function LeadBox({ lead, status, isAdmin, users, selectable, selected, onToggleS
         {status !== 'pending' && <Badge tone={TRIAGE_STATUS_META[status].tone}>{TRIAGE_STATUS_META[status].label}</Badge>}
       </div>
 
-      {(lead.triaged_at || lead.hold_until || lead.archived_at) && (
+      {(lead.triaged_at || lead.hold_until || lead.archived_at || lead.contacted_at || lead.wa_status === 'no') && (
         <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-500">
           <TriageMeta lead={lead} />
         </p>
@@ -700,7 +726,7 @@ function LeadBox({ lead, status, isAdmin, users, selectable, selected, onToggleS
       </div>
 
       <div className="mt-auto space-y-2 border-t border-neutral-800 pt-4">
-        <WhatsAppButton lead={lead} />
+        <WhatsAppButton lead={lead} onContact={onContact} />
         <div className="flex flex-wrap items-center gap-2">
           <DecisionButtons lead={lead} status={status} onDecide={onDecide} stretch />
           <LeadActions lead={lead} status={status} {...actions} stretch />
@@ -732,10 +758,17 @@ export default function TriagePage({ navigate }) {
   const queryClient = useQueryClient();
   const { data: users = [] } = useUserDirectory();
   const [view, setView] = useViewMode();
-  const [status, setStatus] = useState('pending');
-  const [assignee, setAssignee] = useState(''); // '' = todos, 'none' = sem responsável, id
-  const [search, setSearch] = useState('');
-  const [offset, setOffset] = useState(0);
+  // Onde estava (aba, pessoa filtrada, pesquisa, página e o último lead chamado): ir à Central
+  // e voltar não perde nada.
+  const saved = useRef(readSavedState()).current;
+  const [status, setStatus] = useState(saved.status ?? 'pending');
+  const [assignee, setAssignee] = useState(saved.assignee ?? ''); // '' = todos, 'none' = sem responsável, id
+  const [search, setSearch] = useState(saved.search ?? '');
+  const [offset, setOffset] = useState(saved.offset ?? 0);
+  const [lastContacted, setLastContacted] = useState(saved.lastLeadId ?? null);
+  useEffect(() => {
+    writeSavedState({ status, assignee, search, offset, lastLeadId: lastContacted });
+  }, [status, assignee, search, offset, lastContacted]);
   const [pageSize, setPageSize] = useState(readPageSize);
   const [decision, setDecision] = useState(null); // { lead, status }
   const [distributing, setDistributing] = useState(false);
@@ -871,6 +904,37 @@ export default function TriagePage({ navigate }) {
 
   const counts = summary.data?.counts;
   const leads = list.data?.data ?? [];
+
+  // De volta da Central: rola até o último lead chamado (uma vez por visita).
+  const scrolledBack = useRef(false);
+  useEffect(() => {
+    if (scrolledBack.current || !lastContacted || !list.data) return;
+    scrolledBack.current = true;
+    document.querySelector(`[data-lead-id="${lastContacted}"]`)?.scrollIntoView({ block: 'center' });
+  }, [list.data, lastContacted]);
+
+  // "Tem WhatsApp?": checa no WhatsApp os leads da página que ainda não se sabe, aos poucos
+  // (lotes de 10, uma consulta de cada vez no servidor), e o ícone muda conforme chegam.
+  const waAsked = useRef(new Set());
+  const mounted = useRef(true);
+  useEffect(() => () => {
+    mounted.current = false;
+  }, []);
+  useEffect(() => {
+    const ids = leads.filter((l) => l.phone && !l.wa_status && !waAsked.current.has(l.id)).map((l) => l.id);
+    if (!ids.length) return;
+    ids.forEach((id) => waAsked.current.add(id));
+    (async () => {
+      for (let i = 0; i < ids.length && mounted.current; i += 10) {
+        const result = await checkLeadsWhatsApp(ids.slice(i, i + 10)).catch(() => null);
+        if (!result || result.skipped) return; // WhatsApp desligado: tenta de novo noutra visita
+        const found = new Map(result.results.filter((r) => r.wa_status).map((r) => [r.id, r.wa_status]));
+        queryClient.setQueriesData({ queryKey: ['triage', 'list'] }, (old) =>
+          old?.data ? { ...old, data: old.data.map((l) => (found.has(l.id) ? { ...l, wa_status: found.get(l.id) } : l)) } : old,
+        );
+      }
+    })();
+  }, [list.data]); // eslint-disable-line react-hooks/exhaustive-deps
   // Só leads ainda na fila (pendente/em espera, não arquivados) podem ser reatribuídos.
   const selectableIds = leads.filter((l) => isActionable(viewStatusOf(l))).map((l) => l.id);
   // Ignora ids que saíram da página (ex.: decididos ou arquivados, inclusive por outra pessoa).
@@ -890,6 +954,12 @@ export default function TriagePage({ navigate }) {
     onRequalify: (l) => requalifyMutation.mutate(l),
     onArchive: (l) => archiveMutation.mutate(l),
     onRestore: (l) => restoreMutation.mutate(l),
+    // Grava já (e não só no efeito): o clique leva à Central e a página desmonta antes do efeito.
+    onContact: (l) => {
+      setLastContacted(l.id);
+      writeSavedState({ status, assignee, search, offset, lastLeadId: l.id });
+    },
+    highlighted: lead.id === lastContacted,
   });
 
   // Rodapé: quantos por página (sempre) e as páginas (quando há mais de uma).

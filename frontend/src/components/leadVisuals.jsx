@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Globe, Loader2, MessageCircle, PhoneOff, Star } from 'lucide-react';
+import { Globe, Loader2, MessageCircle, MessageCircleOff, PhoneOff, Star } from 'lucide-react';
 import { startLeadConversation } from '../lib/api.js';
 import { openChatWithDraft } from '../lib/chatDraft.js';
+import { formatRelative } from '../lib/labels.js';
 import { LANGUAGE_LABELS } from '../utils/country.js';
 import { gerarLinkWhatsApp, gerarMensagemWhatsApp, paisDoLead } from '../utils/whatsapp.js';
 import { useToast } from './toast.jsx';
@@ -81,6 +82,10 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
   const pais = paisDoLead(lead);
   const idioma = pais.foreign ? `${pais.flag} ${pais.label}: mensagem em ${LANGUAGE_LABELS[pais.lang]}` : null;
   const unavailable = lead.phone ? `Número não compatível com WhatsApp: ${lead.phone}` : 'Telefone não informado';
+  // Checado no WhatsApp (whatsappCheck): este número não tem conta → é para ligar.
+  const noWhatsApp = lead.wa_status === 'no';
+  const contacted = approached || Boolean(lead.contacted_at);
+  const contactedLabel = lead.contacted_at ? `Mensagem enviada ${formatRelative(lead.contacted_at)}` : 'Já contatado';
 
   const handleContact = async () => {
     if (busy) return;
@@ -102,6 +107,14 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
   };
 
   if (variant === 'icon') {
+    if (link && noWhatsApp) {
+      const label = `Este número não tem WhatsApp: ligue para ${lead.phone}`;
+      return (
+        <a href={`tel:${lead.phone}`} title={label} aria-label={label} className={cx('inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-amber-500 transition hover:bg-amber-950/40 hover:text-amber-300', className)}>
+          <MessageCircleOff className="size-4" />
+        </a>
+      );
+    }
     if (!link) {
       return (
         <span title={unavailable} aria-label={unavailable} className={cx('inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-neutral-700', className)}>
@@ -114,15 +127,30 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
         type="button"
         onClick={handleContact}
         disabled={busy}
-        title={`Chamar no WhatsApp (pela Central de Atendimento)${idioma ? ` · ${idioma}` : ""}`}
-        aria-label={`Chamar ${lead.name} no WhatsApp`}
+        title={`${contacted ? `${contactedLabel} · chamar de novo` : 'Chamar no WhatsApp (pela Central de Atendimento)'}${idioma ? ` · ${idioma}` : ''}`}
+        aria-label={contacted ? `${lead.name}: ${contactedLabel}. Abrir a conversa` : `Chamar ${lead.name} no WhatsApp`}
         className={cx(
-          'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-emerald-500 transition hover:bg-emerald-950/50 hover:text-emerald-300 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60',
+          'inline-flex size-8 shrink-0 items-center justify-center rounded-lg transition focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60',
+          // Já contatado: botão cheio (dá para ver de longe quem já recebeu mensagem).
+          contacted ? 'bg-emerald-700 text-white hover:bg-emerald-600' : 'text-emerald-500 hover:bg-emerald-950/50 hover:text-emerald-300',
           className,
         )}
       >
         {busy ? <Loader2 className="size-4 animate-spin" /> : <MessageCircle className="size-4" />}
       </button>
+    );
+  }
+
+  if (link && noWhatsApp) {
+    return (
+      <a
+        href={`tel:${lead.phone}`}
+        title="O número foi checado no WhatsApp e não tem conta: ligue para o lead"
+        className={cx('flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-amber-950/40 px-4 text-sm font-medium text-amber-300 ring-1 ring-amber-900/60 transition hover:bg-amber-950/70', className)}
+      >
+        <MessageCircleOff className="size-4" />
+        Sem WhatsApp · ligar
+      </a>
     );
   }
 
@@ -145,7 +173,7 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
       disabled={busy}
       title={`Abre a conversa na Central de Atendimento com a mensagem pronta para enviar${idioma ? ` · ${idioma}` : ""}`}
       className={cx(
-        approached
+        contacted
           ? 'flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-emerald-900/60 bg-emerald-950/20 px-4 text-sm font-semibold whitespace-nowrap text-emerald-400 transition hover:bg-emerald-950/50 active:scale-[0.98]'
           : 'flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold whitespace-nowrap text-white shadow-md shadow-emerald-950/50 transition hover:bg-emerald-500 active:scale-[0.98]',
         'disabled:cursor-wait disabled:opacity-70',
@@ -153,7 +181,7 @@ export function WhatsAppButton({ lead, variant = 'full', approached = false, onC
       )}
     >
       {busy ? <Loader2 className="size-4 animate-spin" /> : <MessageCircle className="size-4" />}
-      {approached ? 'Chamar novamente' : 'Chamar no WhatsApp'}
+      {contacted ? 'Chamar novamente' : 'Chamar no WhatsApp'}
       {pais.foreign && (
         <span className="rounded-md bg-black/20 px-1.5 py-0.5 text-xs font-medium" aria-label={idioma}>
           {pais.flag} {pais.lang.toUpperCase()}

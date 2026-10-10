@@ -479,6 +479,20 @@ export function createWhatsAppClient({
     },
 
     /**
+     * O número tem WhatsApp? (DDI + DDD + número, só dígitos). Pergunta ao WhatsApp sem enviar
+     * nada. null = não deu para saber agora (desconectado, demorou).
+     * @returns {Promise<boolean|null>}
+     */
+    async hasWhatsApp(number) {
+      if (!client || state.status !== 'ready' || !number) return null;
+      try {
+        return Boolean(await withTimeout(client.getNumberId(number), 8_000));
+      } catch {
+        return null;
+      }
+    },
+
+    /**
      * Estado atual (ack) das últimas mensagens enviadas numa conversa, pela parte estável do id
      * (id.id): Map "3EB0A1B2..." → 1 enviada, 2 entregue, 3 lida, 4 ouvida. Vazio se não der.
      */

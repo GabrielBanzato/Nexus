@@ -18,6 +18,7 @@ import { createAnthropicClient } from './services/anthropicClient.js';
 import { createOllamaClient } from './services/ollamaClient.js';
 import { createMeetingNex } from './services/meetingNex.js';
 import { createTranscriber } from './services/transcriber.js';
+import { createWhatsAppCheck } from './services/whatsappCheck.js';
 import { createWhatsAppClient } from './services/whatsappClient.js';
 import { publicOrigin } from './repositories/meetingRepository.js';
 import { createPushService } from './services/pushNotifications.js';
@@ -153,6 +154,8 @@ export async function buildApp() {
   // "Visto" das mensagens: evento do WhatsApp + atualização ao abrir a conversa.
   const ackSync = createAckSync({ whatsapp, io, logger: app.log.child({ module: 'acks' }) });
   app.decorate('ackSync', ackSync);
+  // "Este número tem WhatsApp?" antes de escrever (Triagem e Central).
+  app.decorate('waCheck', whatsapp ? createWhatsAppCheck({ whatsapp, logger: app.log.child({ module: 'wa-check' }) }) : null);
   app.addHook('onClose', async () => ackSync.stop());
   app.addHook('onClose', async () => whatsapp?.stop());
 

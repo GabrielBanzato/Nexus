@@ -218,7 +218,7 @@ export async function ensureClientForLead(leadId, { fallbackResponsibleId, allow
     .where((w) => w.where('lead_id', lead.id).orWhereIn(DIGITS('phone'), keys))
     .orderByRaw("FIELD(status, 'active', 'lead', 'archived')")
     .orderBy('updated_at', 'desc')
-    .first('id', 'responsible_id');
+    .first('id', 'responsible_id', 'lead_id');
   const responsibleId = workerId ?? fallbackResponsibleId ?? null;
   if (!allow({ workerId, responsibleId: existing?.responsible_id ?? null })) return { client: null, workerId, reason: 'NOT_FOUND' };
 
@@ -226,6 +226,9 @@ export async function ensureClientForLead(leadId, { fallbackResponsibleId, allow
     if (!existing.responsible_id && responsibleId) {
       await db('clients').where({ id: existing.id }).whereNull('responsible_id').update({ responsible_id: responsibleId });
     }
+    // Achado pelo telefone (ex.: escreveu antes pelo WhatsApp): liga-o ao lead, para a Triagem
+    // saber que já foi contactado e acompanhar o "Arquivado".
+    if (!existing.lead_id) await db('clients').where({ id: existing.id }).whereNull('lead_id').update({ lead_id: lead.id });
     return { client: await findClientById(existing.id), workerId };
   }
 

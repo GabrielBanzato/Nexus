@@ -240,6 +240,7 @@ export default async function triageRoutes(app) {
       details: { name: triage.name, status: triage.triage_status },
     });
     publish('triage', request);
+    publish('clients', request);
     return { data: triage };
   });
 }

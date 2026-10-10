@@ -63,6 +63,7 @@ export async function listConversations({ responsibleId, q, limit = 100, include
       'c.phone',
       'c.status',
       'c.hold_until',
+      db.raw('c.whatsapp_jid IS NOT NULL AS wa_linked'),
       'c.responsible_id',
       'u.name as responsible_name',
       'lm.content as last_message',

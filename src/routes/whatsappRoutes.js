@@ -212,6 +212,25 @@ export default async function whatsappRoutes(app) {
    * com o texto no campo para a pessoa rever e enviar.
    * Parceiro: só leads que ele trabalha (e empresas que não são de outro parceiro).
    */
+  /**
+   * "Estes leads têm WhatsApp?" (Triagem): checa no WhatsApp os que ainda não se sabe, aos
+   * poucos (lotes pequenos, uma consulta de cada vez) e grava no lead. skipped = WhatsApp desligado.
+   */
+  app.post(
+    '/api/leads/wa-check',
+    { schema: { body: { type: 'object', required: ['ids'], additionalProperties: false, properties: { ids: { type: 'array', maxItems: 100, items: { type: 'integer', minimum: 1 } } } } } },
+    async (request) => {
+      if (!app.waCheck) return { data: { skipped: true, results: [] } };
+      return { data: await app.waCheck.checkLeads(request.body.ids) };
+    },
+  );
+
+  /** Central: esta conversa (ainda sem contacto no WhatsApp) tem para onde enviar? */
+  app.get('/api/clients/:id/wa-check', { schema: { params: idParam } }, async (request) => {
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    return { data: { exists: app.waCheck ? await app.waCheck.checkClient(client) : null } };
+  });
+
   app.post('/api/leads/:id/conversation', { schema: { params: idParam } }, async (request) => {
     const user = request.currentUser;
     const admin = isAdmin(user);

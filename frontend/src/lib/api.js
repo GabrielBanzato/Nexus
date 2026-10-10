@@ -202,6 +202,9 @@ export const getClientMessages = (clientId, { before, signal } = {}) =>
 export const sendClientMessage = (clientId, content) =>
   request(`/api/clients/${clientId}/messages`, json('POST', { content }));
 /** "Chamar no WhatsApp" de um lead: a conversa dele na Central (cria o cliente se preciso). */
+/** "Têm WhatsApp?" (até 10 por pedido; o servidor checa um de cada vez). */
+export const checkLeadsWhatsApp = (ids) => request('/api/leads/wa-check', json('POST', { ids })).then(unwrap);
+export const checkClientWhatsApp = (clientId) => request(`/api/clients/${clientId}/wa-check`).then(unwrap);
 export const startLeadConversation = (leadId) => request(`/api/leads/${leadId}/conversation`, { method: 'POST' }).then(unwrap);
 /** Sugestão da IA (rascunho, nunca enviado sozinho). GET: a atual + meta.pending; POST: gera já. */
 export const getAiSuggestion = (clientId) => request(`/api/clients/${clientId}/ai-suggestion`);

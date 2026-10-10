@@ -2,6 +2,7 @@ import { publish } from '../lib/events.js';
 import { forbidden, notFound } from '../lib/errors.js';
 import { isAdmin, requireRole } from '../plugins/auth.js';
 import { diff, logActivity } from '../repositories/activityLogRepository.js';
+import { syncArchiveFromClient } from '../repositories/triageRepository.js';
 import {
   CLIENT_FIELDS,
   CLIENT_STATUSES,
@@ -105,6 +106,11 @@ export default async function clientRoutes(app) {
     // Saiu de "Em espera": a data de retomar deixa de fazer sentido.
     if (fields.status && fields.status !== 'on_hold') fields.hold_until = null;
     const client = await updateClient(before.id, fields);
+    // Arquivado na Central = arquivado também na Triagem (e volta se sair de Arquivado).
+    if (fields.status && (fields.status === 'archived') !== (before.status === 'archived')) {
+      const changed = await syncArchiveFromClient(client.lead_id, fields.status === 'archived', user.id);
+      if (changed) publish('triage', request);
+    }
     await logActivity(request, {
       action: 'client.update',
       entityType: 'client',

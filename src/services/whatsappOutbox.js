@@ -2,6 +2,7 @@ import { db } from '../config/database.js';
 import { clientAudience } from '../plugins/socket.js';
 import { findClientById, toWhatsAppNumber } from '../repositories/clientRepository.js';
 import { saveMessage } from '../repositories/messageRepository.js';
+import { markLead } from './whatsappCheck.js';
 import { clientSummary } from './whatsappInbox.js';
 
 const coded = (code, message) => Object.assign(new Error(message), { code });
@@ -34,7 +35,15 @@ export async function sendToClient({ whatsapp, io, client, content, senderType, 
   const number = toWhatsAppNumber(client.phone);
   if (!client.whatsapp_jid && !number) throw coded('NO_PHONE', 'Este cliente não tem um telefone válido para WhatsApp.');
 
-  const sent = await whatsapp.sendText({ jid: client.whatsapp_jid, number }, signed(content, signature));
+  let sent;
+  try {
+    sent = await whatsapp.sendText({ jid: client.whatsapp_jid, number }, signed(content, signature));
+  } catch (err) {
+    // Fica registado no lead: a Triagem passa a mostrar "sem WhatsApp" (para ligar).
+    if (err.code === 'NOT_ON_WHATSAPP') await markLead(client.lead_id, false).catch(() => {});
+    throw err;
+  }
+  if (!client.whatsapp_jid) await markLead(client.lead_id, true).catch(() => {});
 
   const record = { clientId: client.id, senderType, content, senderUserId, ack: 1 };
   // Id repetido (o id recuperado na conversa era de um envio anterior com o mesmo texto): a

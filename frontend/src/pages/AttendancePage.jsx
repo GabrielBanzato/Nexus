@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, Bot, CalendarClock, Check, CheckCheck, CircleAlert, Clock, Eye, MessagesSquare, QrCode, RefreshCw, Search, SendHorizontal, Sparkles, Target, Video, WifiOff, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, Bot, CalendarClock, Check, CheckCheck, CircleAlert, Clock, Eye, MessageCircleOff, MessagesSquare, Phone, QrCode, RefreshCw, Search, SendHorizontal, Sparkles, Target, Video, WifiOff, X } from 'lucide-react';
 import {
   createMeeting,
   endMeeting,
+  checkClientWhatsApp,
   getAckDebug,
   getAiSuggestion,
   getClientMessages,
@@ -1084,6 +1085,15 @@ function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, 
   };
 
   const canSend = waStatus === 'ready';
+  // Conversa ainda sem contacto no WhatsApp (ex.: lead da Triagem): o número tem WhatsApp?
+  // Sabe-se ANTES de escrever (e esperar o Nex) que não dá para enviar.
+  const waCheck = useQuery({
+    queryKey: ['wa-check', clientId],
+    queryFn: () => checkClientWhatsApp(clientId),
+    enabled: canSend && !conversation.wa_linked && list.length === 0,
+    staleTime: 10 * 60_000,
+  });
+  const noWhatsApp = waCheck.data?.exists === false;
   let rendered = [];
   let previousDay = null;
   for (const message of list) {
@@ -1160,7 +1170,19 @@ function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, 
         )}
       </div>
 
-      {canSend ? (
+      {canSend && noWhatsApp ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800 bg-[#141414] px-4 py-3">
+          <p className="flex items-center gap-2 text-sm text-amber-200">
+            <MessageCircleOff className="size-4 shrink-0 text-amber-400" />
+            O número {conversation.phone} não tem WhatsApp. Ligue para o cliente.
+          </p>
+          {conversation.phone && (
+            <a href={`tel:${conversation.phone}`} className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700">
+              <Phone className="size-4" /> Ligar
+            </a>
+          )}
+        </div>
+      ) : canSend ? (
         <Composer
           key={clientId}
           disabled={!messages.data}

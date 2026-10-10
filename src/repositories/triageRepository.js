@@ -44,6 +44,10 @@ const COLUMNS = [
   'd.stage as deal_stage', // null se o negócio foi apagado (ou nunca existiu)
   't.archived_at',
   'ab.name as archived_by_name',
+  'l.wa_status',
+  // Já se mandou mensagem a este lead pela Central? (a última, de qualquer pessoa da equipe)
+  db.raw(`(SELECT MAX(m.created_at) FROM clients c JOIN messages m ON m.client_id = c.id
+            WHERE c.lead_id = l.id AND m.sender_type IN ('agent', 'bot')) AS contacted_at`),
 ];
 
 function applyFilters(query, { status, assignedTo, q, nicho, grupo }) {
@@ -352,6 +356,18 @@ export async function archiveLead(leadId, userId) {
   return findTriageByLeadId(leadId);
 }
 
+/**
+ * O contacto do lead foi arquivado (ou desarquivado) na Central: a Triagem acompanha, para o lead
+ * aparecer em "Arquivados". Silencioso: lead sem triagem, ou já no estado pedido, não faz nada.
+ */
+export async function syncArchiveFromClient(leadId, archived, userId) {
+  if (!leadId) return 0;
+  const query = db('lead_triage').where({ lead_id: leadId });
+  return archived
+    ? query.whereNull('archived_at').update({ archived_at: db.fn.now(), archived_by: userId })
+    : query.whereNotNull('archived_at').update({ archived_at: null, archived_by: null });
+}
+
 /** Desarquivar: o lead volta à vista do seu estado (fila, espera, qualificados...). */
 export async function restoreLead(leadId) {
   const updated = await db('lead_triage')
@@ -362,5 +378,7 @@ export async function restoreLead(leadId) {
     const exists = await db('lead_triage').where({ lead_id: leadId }).first('lead_id');
     throw exists ? conflict('Este lead não está arquivado.') : notFound('Lead');
   }
+  // O contacto dele na Central, se estava "Arquivado", volta a Lead (os dois andam juntos).
+  await db('clients').where({ lead_id: leadId, status: 'archived' }).update({ status: 'lead' });
   return findTriageByLeadId(leadId);
 }

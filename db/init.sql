@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS leads (
   is_hidden          TINYINT(1)     NOT NULL DEFAULT 0 COMMENT 'Oculto/arquivado (soft delete)',
   hidden_at          DATETIME       NULL,
   hidden_by          INT UNSIGNED   NULL,
+  wa_status          ENUM('yes', 'no') NULL COMMENT 'Tem WhatsApp? (checado no WhatsApp; NULL = ainda não)',
+  wa_checked_at      DATETIME       NULL,
 
   -- Metadados da extração
   maps_url           VARCHAR(1000)  NULL,

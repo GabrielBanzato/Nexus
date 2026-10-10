@@ -20,12 +20,15 @@ import { iceServers } from '../services/turn.js';
  *  - Máximo de MEET_MAX_PARTICIPANTS (P2P em malha: acima de 3 cada um enviaria vídeo demais).
  *  - Gravação: só a equipe liga, e TODOS veem o aviso (LGPD: quem é gravado tem de saber).
  *  - "Encerrar para todos": só a equipe; a sala fica fechada (o link deixa de funcionar).
+ *  - Nex (services/meetingNex.js): a equipe entra também na sala "meet-staff:<id>", onde chegam
+ *    a transcrição e os pontos da reunião; o áudio vem do navegador de quem conduz (nex:audio).
+ *    Os convidados só recebem o aviso de que a conversa está a ser transcrita (meet:nex).
  */
 
 const MAX_NAME = 60;
 const cleanName = (value) => String(value ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, MAX_NAME);
 
-export function registerMeetSignaling(app, io) {
+export function registerMeetSignaling(app, io, { nex = null } = {}) {
   const nsp = io.of('/meet');
   const recording = new Map(); // meetingId → { by } enquanto alguém grava
 
@@ -71,12 +74,14 @@ export function registerMeetSignaling(app, io) {
     }
     socket.leave(lobbyOf(meetingId));
     socket.join(room);
+    if (socket.data.staff) socket.join(`meet-staff:${meetingId}`);
     socket.data.admitted = true;
     socket.emit('meet:joined', {
       self: peerInfo(socket),
       peers: inRoom.map(peerInfo),
       iceServers: iceServers(socket.data.user?.id ?? `guest-${socket.id}`),
       recording: recording.get(meetingId) ?? null,
+      nex: nex ? { available: nex.available, listening: nex.isListening(meetingId) } : { available: false, listening: false },
       meeting: { title: socket.data.meeting.title, host_name: socket.data.meeting.host_name },
     });
     socket.to(room).emit('meet:peer-joined', peerInfo(socket));
@@ -95,6 +100,22 @@ export function registerMeetSignaling(app, io) {
   nsp.on('connection', async (socket) => {
     const { meetingId, staff } = socket.data;
     const room = roomOf(meetingId);
+
+    // ---- Nex (só equipe; o serviço confere staff/admitted de novo) ----
+    if (nex && staff) {
+      socket.on('nex:audio', (meta, audio) => {
+        nex.handleAudio(socket, meta, audio).catch((err) => app.log.warn({ err: err.message }, 'Nex: falha ao receber áudio'));
+      });
+      const answer = (fn) => async (_payload, ack) => {
+        const result = await fn().catch((err) => ({ error: err.message }));
+        if (typeof ack === 'function') ack(result ?? {});
+      };
+      socket.on('nex:snapshot', answer(() => nex.snapshot(meetingId)));
+      socket.on('nex:pause', (payload, ack) => answer(() => nex.setPaused(socket, Boolean(payload?.paused)))(payload, ack));
+      socket.on('nex:analyze', answer(() => nex.analyzeNow(socket)));
+      socket.on('nex:propose', answer(() => nex.propose(socket)));
+      socket.on('nex:save-deal', answer(() => nex.saveToDeal(socket)));
+    }
 
     // Só aceita sinalização para alguém da MESMA sala (nunca para um socket qualquer).
     socket.on('meet:signal', ({ to, data } = {}) => {
@@ -118,6 +139,7 @@ export function registerMeetSignaling(app, io) {
     socket.on('meet:end', async () => {
       if (!staff) return;
       await updateMeeting(meetingId, { status: 'ended', ended_at: new Date() });
+      nex?.onEnded(meetingId).catch(() => {});
       recording.delete(meetingId);
       nsp.to(room).to(lobbyOf(meetingId)).emit('meet:ended', { by: socket.data.name });
       nsp.in(room).disconnectSockets(true);
@@ -125,6 +147,7 @@ export function registerMeetSignaling(app, io) {
     });
 
     socket.on('disconnect', async () => {
+      nex?.onDisconnect(socket);
       // Quem gravava saiu: a gravação acabou com ele (é feita no navegador dele).
       if (recording.get(meetingId)?.socketId === socket.id) {
         recording.delete(meetingId);

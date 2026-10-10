@@ -16,6 +16,8 @@ import { createAiAgent } from './services/aiAgent.js';
 import { createNexReviewer } from './services/nexReviewer.js';
 import { createAnthropicClient } from './services/anthropicClient.js';
 import { createOllamaClient } from './services/ollamaClient.js';
+import { createMeetingNex } from './services/meetingNex.js';
+import { createTranscriber } from './services/transcriber.js';
 import { createWhatsAppClient } from './services/whatsappClient.js';
 import { publicOrigin } from './repositories/meetingRepository.js';
 import { createPushService } from './services/pushNotifications.js';
@@ -79,8 +81,18 @@ export async function buildApp() {
 
   // Socket.io em /api/socket.io (autenticado com o mesmo JWT; usa app.jwt, por isso vem depois).
   const io = registerSocket(app);
+  // Nex nas reuniões: transcrição (Whisper local) + pontos da negociação. O modelo de IA é
+  // criado mais abaixo; o Nex lê-o de app.ai quando precisa.
+  const meetNex = createMeetingNex({
+    transcriber: config.meet.whisperUrl ? createTranscriber({ url: config.meet.whisperUrl }) : null,
+    getModel: () => app.ai?.ollama ?? null,
+    io,
+    logger: app.log.child({ module: 'meet-nex' }),
+    timeZone: config.business.timezone,
+  });
+  app.decorate('meetNex', meetNex);
   // Videochamadas: sinalização WebRTC no namespace "/meet" (aceita convidados sem conta).
-  registerMeetSignaling(app, io);
+  registerMeetSignaling(app, io, { nex: meetNex });
 
   // Assistente de IA (sugere respostas): criado depois do WhatsApp; o inbox chama-o por esta
   // referência a cada mensagem recebida.

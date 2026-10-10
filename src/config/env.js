@@ -58,6 +58,9 @@ export const config = Object.freeze({
     // WebRTC P2P (vídeo direto entre navegadores): ótimo até 3 pessoas. Acima disso cada um
     // teria de enviar um vídeo por participante; aí o certo é um SFU (ex.: LiveKit).
     maxParticipants: toInt(process.env.MEET_MAX_PARTICIPANTS, 3),
+    // Nex nas reuniões: serviço de transcrição (whisper/, faster-whisper local). Vazio = desligado.
+    // Os pontos/dicas/proposta usam a IA (AI_ENABLED); sem ela, fica só a transcrição.
+    whisperUrl: process.env.MEET_NEX_ENABLED === 'false' ? '' : (process.env.WHISPER_URL || '').replace(/\/$/, ''),
     // STUN descobre o IP público; o TURN (coturn) retransmite quando a rede bloqueia o P2P.
     stunUrls: (process.env.STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((s) => s.trim()).filter(Boolean),
     // Ex.: turn:turn.suaempresa.com.br:3478?transport=udp,turn:turn.suaempresa.com.br:3478?transport=tcp

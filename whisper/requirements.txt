@@ -1,0 +1,3 @@
+faster-whisper==1.2.1
+# O faster-whisper 1.2.1 chama av.open(..., metadata_errors=...), que o PyAV 16+ já não aceita.
+av==15.1.0

@@ -18,11 +18,13 @@ import {
   Volume1,
   Volume2,
   VolumeX,
+  Wand2,
 } from 'lucide-react';
 import { getToken, getTokenPayload } from '../lib/session.js';
 import { createBlurredTrack, nativeBlurSupported, setNativeBlur } from './backgroundBlur.js';
 import { createMeetingRecorder, downloadRecording, recordingSupported } from './recorder.js';
 import { useMeshCall } from './useMeshCall.js';
+import NexPanel from './NexPanel.jsx';
 
 /**
  * Sala de videochamada (/sala/<código>), fora do login: o cliente entra só com o link.
@@ -385,6 +387,7 @@ export default function MeetingRoom({ code }) {
   const [recorder, setRecorder] = useState(null);
   const [savedRecording, setSavedRecording] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [nexOpen, setNexOpen] = useState(false); // telemóvel/ecrã estreito: o painel abre por cima
   const [joinedAt, setJoinedAt] = useState(null);
   const [now, setNow] = useState(Date.now());
   const videoEls = useRef(new Map()); // id → <video>, para o gravador desenhar
@@ -837,95 +840,126 @@ export default function MeetingRoom({ code }) {
 
   return (
     <Shell title={info?.title}>
+      {call.nex.listening && (
+        <div className="flex items-center justify-center gap-2 bg-violet-950/70 px-4 py-1.5 text-xs font-medium text-violet-100" role="status">
+          <Wand2 className="size-3.5" />
+          O assistente Nex está a transcrever esta conversa para apoiar o atendimento.
+        </div>
+      )}
       {recording && (
         <div className="flex items-center justify-center gap-2 bg-red-950/80 px-4 py-1.5 text-xs font-medium text-red-100" role="status">
           <Circle className="size-2.5 animate-pulse fill-red-500 text-red-500" />
           Esta reunião está a ser gravada por {recording.by}.
         </div>
       )}
-      <main className="flex min-h-0 flex-1 flex-col gap-3 p-3 sm:p-4">
-        {spotlight ? (
-          <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[1fr_16rem]">
-            <Tile {...tileProps(spotlight)} spotlight />
-            <div className="grid content-start gap-3 sm:grid-cols-2 lg:grid-cols-1">
-              {others.map((t) => <Tile key={t.id} {...tileProps(t)} />)}
-            </div>
-          </div>
-        ) : (
-          <div className={cx('mx-auto grid w-full flex-1 content-center gap-3', tiles.length === 1 ? 'max-w-4xl' : 'max-w-6xl sm:grid-cols-2')}>
-            {tiles.map((t, i) => (
-              // 3 participantes: o terceiro centrado na segunda linha.
-              <div key={t.id} className={cx(tiles.length === 3 && i === 2 && 'sm:col-span-2 sm:mx-auto sm:w-1/2')}>
-                <Tile {...tileProps(t)} />
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <main className="flex min-h-0 flex-1 flex-col gap-3 p-3 sm:p-4">
+            {spotlight ? (
+              <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[1fr_16rem]">
+                <Tile {...tileProps(spotlight)} spotlight />
+                <div className="grid content-start gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                  {others.map((t) => <Tile key={t.id} {...tileProps(t)} />)}
+                </div>
               </div>
-            ))}
-          </div>
-        )}
-        {peers.length === 0 && (
-          <p className="text-center text-sm text-neutral-400">
-            Aguardando os outros participantes...{' '}
+            ) : (
+              <div className={cx('mx-auto grid w-full flex-1 content-center gap-3', tiles.length === 1 ? 'max-w-4xl' : 'max-w-6xl sm:grid-cols-2')}>
+                {tiles.map((t, i) => (
+                  // 3 participantes: o terceiro centrado na segunda linha.
+                  <div key={t.id} className={cx(tiles.length === 3 && i === 2 && 'sm:col-span-2 sm:mx-auto sm:w-1/2')}>
+                    <Tile {...tileProps(t)} />
+                  </div>
+                ))}
+              </div>
+            )}
+            {peers.length === 0 && (
+              <p className="text-center text-sm text-neutral-400">
+                Aguardando os outros participantes...{' '}
+                {isStaff && (
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(window.location.href).then(() => setCopied(true))}
+                    className="inline-flex items-center gap-1 font-medium text-red-400 hover:text-red-300"
+                  >
+                    <Copy className="size-3.5" />
+                    {copied ? 'Link copiado!' : 'Copiar link da sala'}
+                  </button>
+                )}
+              </p>
+            )}
+          </main>
+
+          {showDevices && (
+            <div className="mx-auto mb-2 w-full max-w-sm rounded-2xl bg-[#1a1a1a] p-3 shadow-2xl ring-1 ring-neutral-800">
+              <p className="mb-2 text-xs font-semibold text-neutral-300">Câmara e microfone</p>
+              <DevicePicker devices={devices} current={currentDevices} onChange={switchDevice} busy={switching} error={deviceError} />
+            </div>
+          )}
+          <footer className="flex flex-wrap items-center justify-center gap-3 border-t border-neutral-800/80 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <span className="mr-auto hidden text-sm text-neutral-400 tabular-nums sm:block">{clock}</span>
+            <ControlButton on={mic} onClick={() => setMic((m) => !m)} iconOn={Mic} iconOff={MicOff} label={mic ? 'Desligar microfone' : 'Ligar microfone'} disabled={!localStream?.getAudioTracks().length} />
+            <ControlButton on={cam} onClick={() => setCam((c) => !c)} iconOn={Video} iconOff={VideoOff} label={cam ? 'Desligar câmara' : 'Ligar câmara'} disabled={!localStream?.getVideoTracks().length || Boolean(screen)} />
+            <BlurButton on={blurOn} loading={blurLoading} onClick={toggleBlur} disabled={!rawVideo || Boolean(screen)} />
+            {localStream && (
+              <ControlButton on={!showDevices} onClick={() => setShowDevices((v) => !v)} iconOn={Settings} iconOff={Settings} label="Escolher câmara e microfone" />
+            )}
+            {/* Partilha de ecrã: não existe nos navegadores de telemóvel. */}
+            {navigator.mediaDevices?.getDisplayMedia && (
+              <ControlButton on={!screen} onClick={screen ? stopScreen : startScreen} iconOn={MonitorUp} iconOff={MonitorUp} label={screen ? 'Parar de partilhar o ecrã' : 'Partilhar ecrã'} />
+            )}
+            {isStaff && recordingSupported() && (
+              <button
+                type="button"
+                onClick={recorder ? stopRecording : startRecording}
+                title={recorder ? 'Parar gravação (o ficheiro é guardado no seu computador)' : 'Gravar (todos são avisados; o ficheiro fica no seu computador)'}
+                className={cx(
+                  'flex h-12 items-center gap-2 rounded-full px-4 text-sm font-semibold transition active:scale-95',
+                  recorder ? 'bg-red-700 text-white hover:bg-red-600' : 'bg-neutral-800 text-white hover:bg-neutral-700',
+                )}
+              >
+                {recorder ? <Square className="size-4 fill-white" /> : <Circle className="size-4 fill-red-500 text-red-500" />}
+                {recorder ? 'Parar gravação' : 'Gravar'}
+              </button>
+            )}
             {isStaff && (
               <button
                 type="button"
-                onClick={() => navigator.clipboard?.writeText(window.location.href).then(() => setCopied(true))}
-                className="inline-flex items-center gap-1 font-medium text-red-400 hover:text-red-300"
+                onClick={() => setNexOpen((v) => !v)}
+                aria-label="Abrir o Nex"
+                title="Nex: pontos da negociação"
+                className={cx('flex size-12 items-center justify-center rounded-full transition active:scale-95 lg:hidden', nexOpen ? 'bg-violet-700 text-white' : 'bg-neutral-800 text-violet-300 hover:bg-neutral-700')}
               >
-                <Copy className="size-3.5" />
-                {copied ? 'Link copiado!' : 'Copiar link da sala'}
+                <Wand2 className="size-5" />
               </button>
             )}
-          </p>
-        )}
-      </main>
-
-      {showDevices && (
-        <div className="mx-auto mb-2 w-full max-w-sm rounded-2xl bg-[#1a1a1a] p-3 shadow-2xl ring-1 ring-neutral-800">
-          <p className="mb-2 text-xs font-semibold text-neutral-300">Câmara e microfone</p>
-          <DevicePicker devices={devices} current={currentDevices} onChange={switchDevice} busy={switching} error={deviceError} />
-        </div>
-      )}
-      <footer className="flex flex-wrap items-center justify-center gap-3 border-t border-neutral-800/80 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <span className="mr-auto hidden text-sm text-neutral-400 tabular-nums sm:block">{clock}</span>
-        <ControlButton on={mic} onClick={() => setMic((m) => !m)} iconOn={Mic} iconOff={MicOff} label={mic ? 'Desligar microfone' : 'Ligar microfone'} disabled={!localStream?.getAudioTracks().length} />
-        <ControlButton on={cam} onClick={() => setCam((c) => !c)} iconOn={Video} iconOff={VideoOff} label={cam ? 'Desligar câmara' : 'Ligar câmara'} disabled={!localStream?.getVideoTracks().length || Boolean(screen)} />
-        <BlurButton on={blurOn} loading={blurLoading} onClick={toggleBlur} disabled={!rawVideo || Boolean(screen)} />
-        {localStream && (
-          <ControlButton on={!showDevices} onClick={() => setShowDevices((v) => !v)} iconOn={Settings} iconOff={Settings} label="Escolher câmara e microfone" />
-        )}
-        {/* Partilha de ecrã: não existe nos navegadores de telemóvel. */}
-        {navigator.mediaDevices?.getDisplayMedia && (
-          <ControlButton on={!screen} onClick={screen ? stopScreen : startScreen} iconOn={MonitorUp} iconOff={MonitorUp} label={screen ? 'Parar de partilhar o ecrã' : 'Partilhar ecrã'} />
-        )}
-        {isStaff && recordingSupported() && (
-          <button
-            type="button"
-            onClick={recorder ? stopRecording : startRecording}
-            title={recorder ? 'Parar gravação (o ficheiro é guardado no seu computador)' : 'Gravar (todos são avisados; o ficheiro fica no seu computador)'}
-            className={cx(
-              'flex h-12 items-center gap-2 rounded-full px-4 text-sm font-semibold transition active:scale-95',
-              recorder ? 'bg-red-700 text-white hover:bg-red-600' : 'bg-neutral-800 text-white hover:bg-neutral-700',
+            <ControlButton danger onClick={leave} iconOn={PhoneOff} iconOff={PhoneOff} label="Sair da reunião" />
+            {isStaff && (
+              <button
+                type="button"
+                onClick={async () => {
+                  await stopRecording();
+                  call.endForAll();
+                }}
+                className="ml-auto hidden h-10 rounded-xl px-3 text-sm font-medium text-red-300 ring-1 ring-red-900/70 hover:bg-red-950/50 sm:block"
+              >
+                Encerrar para todos
+              </button>
             )}
-          >
-            {recorder ? <Square className="size-4 fill-white" /> : <Circle className="size-4 fill-red-500 text-red-500" />}
-            {recorder ? 'Parar gravação' : 'Gravar'}
-          </button>
-        )}
-        <ControlButton danger onClick={leave} iconOn={PhoneOff} iconOff={PhoneOff} label="Sair da reunião" />
+          </footer>
+          {recorder && <p className="pb-2 text-center text-[11px] text-neutral-500">A gravar: mantenha esta aba aberta até terminar.</p>}
+          {blurError && <p className="pb-2 text-center text-xs text-amber-300">{blurError}</p>}
+        </div>
+        {/* Nex: coluna fixa à direita no computador; no telemóvel abre por cima (botão na barra). */}
         {isStaff && (
-          <button
-            type="button"
-            onClick={async () => {
-              await stopRecording();
-              call.endForAll();
-            }}
-            className="ml-auto hidden h-10 rounded-xl px-3 text-sm font-medium text-red-300 ring-1 ring-red-900/70 hover:bg-red-950/50 sm:block"
-          >
-            Encerrar para todos
-          </button>
+          <NexPanel
+            call={call}
+            localStream={localStream}
+            peers={peers}
+            onClose={() => setNexOpen(false)}
+            className={cx('w-full max-w-sm lg:static lg:flex lg:w-[22rem] lg:max-w-none', nexOpen ? 'fixed inset-y-0 right-0 z-40 flex shadow-2xl' : 'hidden')}
+          />
         )}
-      </footer>
-      {recorder && <p className="pb-2 text-center text-[11px] text-neutral-500">A gravar: mantenha esta aba aberta até terminar.</p>}
-      {blurError && <p className="pb-2 text-center text-xs text-amber-300">{blurError}</p>}
+      </div>
     </Shell>
   );
 }

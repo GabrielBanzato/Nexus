@@ -39,6 +39,9 @@ export function registerSocket(app) {
     path: SOCKET_PATH,
     serveClient: false,
     cors: { origin: false }, // só mesma origem (via proxy)
+    // Áudio do Nex nas reuniões (nex:audio) chega por aqui: até 2 MB por pedaço (meetingNex.js).
+    // O padrão (1 MB) derrubava a mensagem sem aviso.
+    maxHttpBufferSize: 3e6,
   });
 
   // Autenticação no handshake: o frontend envia o mesmo JWT da API em `auth.token`.

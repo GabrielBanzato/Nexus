@@ -334,6 +334,8 @@ const SCHEMA = [
         status        ENUM('scheduled', 'live', 'ended') NOT NULL DEFAULT 'scheduled',
         remind_day_sent_at  DATETIME NULL COMMENT 'Lembrete do dia enviado (ou dispensado)',
         remind_hour_sent_at DATETIME NULL COMMENT 'Lembrete de 1h antes enviado (ou dispensado)',
+        nex_insights  JSON          NULL COMMENT 'Nex: dores, dúvidas, objeções, sinais e dica da reunião',
+        nex_updated_at DATETIME     NULL,
         started_at    DATETIME      NULL,
         ended_at      DATETIME      NULL,
         created_by    INT UNSIGNED  NULL,
@@ -531,6 +533,27 @@ const SCHEMA = [
         COLLATE = utf8mb4_0900_ai_ci
     `,
   },
+  {
+    // Nex nas reuniões: o que cada um disse (Whisper), em pedaços de ~15s.
+    table: 'meeting_transcripts',
+    sql: `
+      CREATE TABLE IF NOT EXISTS meeting_transcripts (
+        id            INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+        meeting_id    INT UNSIGNED  NOT NULL,
+        speaker_role  ENUM('staff', 'guest') NOT NULL COMMENT 'staff = vendedor/equipe; guest = cliente',
+        speaker_name  VARCHAR(80)   NOT NULL,
+        offset_ms     INT UNSIGNED  NOT NULL COMMENT 'Desde a entrada de quem transcreve (ordem da conversa)',
+        text          TEXT          NOT NULL,
+        created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      
+        PRIMARY KEY (id),
+        KEY idx_transcripts_meeting (meeting_id, offset_ms),
+        CONSTRAINT fk_transcripts_meeting FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE
+      ) ENGINE = InnoDB
+        DEFAULT CHARSET = utf8mb4
+        COLLATE = utf8mb4_0900_ai_ci
+    `,
+  },
 ];
 
 /**
@@ -633,6 +656,16 @@ const COLUMN_MIGRATIONS = [
         ADD COLUMN monthly_start DATE NULL COMMENT '1.º mês da mensalidade (dia 1)' AFTER monthly_value,
         ADD COLUMN monthly_end DATE NULL COMMENT 'Último mês da mensalidade (dia 1); NULL = em curso' AFTER monthly_start,
         ADD COLUMN closing_rate DECIMAL(5,2) NULL COMMENT '% de comissão do fecho (fixada ao fechar)' AFTER monthly_end
+    `,
+  },
+  {
+    table: 'meetings',
+    column: 'nex_insights',
+    name: 'meetings: nex_insights (pontos da reunião anotados pelo Nex)',
+    sql: `
+      ALTER TABLE meetings
+        ADD COLUMN nex_insights JSON NULL COMMENT 'Nex: dores, dúvidas, objeções, sinais e dica da reunião' AFTER remind_hour_sent_at,
+        ADD COLUMN nex_updated_at DATETIME NULL AFTER nex_insights
     `,
   },
 ];

@@ -1,9 +1,8 @@
-import { DENIAL_CORRECTION, DENIES_SERVICE, REPEAT_CORRECTION, RESPONSE_SCHEMA, buildMessages, correctionMessages, describeContext, repeatsPrevious } from '../ai/prompt.js';
-import { db } from '../config/database.js';
-import { detectCountry } from '../lib/country.js';
+import { DENIAL_CORRECTION, DENIES_SERVICE, REPEAT_CORRECTION, RESPONSE_SCHEMA, buildMessages, correctionMessages, repeatsPrevious } from '../ai/prompt.js';
 import { clientAudience } from '../plugins/socket.js';
 import { findClientById } from '../repositories/clientRepository.js';
 import { listMessages } from '../repositories/messageRepository.js';
+import { clientContext } from './clientContext.js';
 
 // Mensagens mais velhas que isto não geram sugestão automática: o WhatsApp reentrega o atraso
 // quando a sessão reconecta, e gerar dezenas de sugestões de uma vez travaria a CPU.
@@ -65,22 +64,6 @@ export function createAiAgent({ ollama, io, logger, debounceMs, historyLimit, ti
     return { ...second, intent: first.intent, blocked: false };
   }
 
-  /** O que se sabe do cliente: lead de origem, negociação mais recente, consultor, país. */
-  async function contextFor(client) {
-    const [lead, deal] = await Promise.all([
-      client.lead_id ? db('leads').where({ id: client.lead_id }).first('nicho', 'endereco', 'website', 'nota', 'avaliacoes_qtd') : null,
-      db('deals')
-        .where((w) => {
-          w.where({ client_id: client.id });
-          if (client.lead_id) w.orWhere({ lead_id: client.lead_id });
-        })
-        .orderBy('updated_at', 'desc')
-        .first('stage', 'meeting_at', 'pains', 'proposal_offer', 'bait', 'final_proposal', 'lost_reason'),
-    ]);
-    const country = detectCountry({ address: lead?.endereco, phone: client.phone });
-    return describeContext({ client, lead, deal, consultant: client.responsible_name, country, timeZone });
-  }
-
   function store(clientId, suggestion) {
     suggestions.delete(clientId);
     suggestions.set(clientId, suggestion);
@@ -97,7 +80,7 @@ export function createAiAgent({ ollama, io, logger, debounceMs, historyLimit, ti
 
     emitTo(client, 'ai:suggesting', { client_id: clientId, on: true });
     try {
-      const context = await contextFor(client).catch((err) => {
+      const context = await clientContext(client, { timeZone }).then((c) => c.text).catch((err) => {
         logger.warn({ err: err.message, clientId }, 'IA: ficha do cliente indisponível; segue só com a conversa');
         return '';
       });

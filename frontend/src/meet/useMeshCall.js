@@ -33,6 +33,9 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
   const [peers, setPeers] = useState({}); // id → { id, name, staff, media, stream, state }
   const [recording, setRecording] = useState(null); // { by } | null
   const [endedBy, setEndedBy] = useState(null);
+  // Nex: disponível neste servidor? A transcrever agora? (todos veem o aviso, como na gravação)
+  const [nex, setNex] = useState({ available: false, listening: false });
+  const [socket, setSocket] = useState(null); // o painel do Nex escuta os eventos dele
 
   const socketRef = useRef(null);
   const pcs = useRef(new Map()); // id → { pc, stream, pending: RTCIceCandidateInit[] }
@@ -136,6 +139,7 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
       reconnectionAttempts: 5,
     });
     socketRef.current = socket;
+    setSocket(socket);
 
     socket.on('connect_error', (err) => {
       if (['NOT_FOUND', 'ENDED', 'NAME_REQUIRED'].includes(err.message)) {
@@ -146,10 +150,11 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
     });
     socket.on('meet:waiting', () => setPhase('waiting'));
     socket.on('meet:full', () => setPhase('full'));
-    socket.on('meet:joined', ({ self: me, peers: existing, iceServers, recording: rec }) => {
+    socket.on('meet:joined', ({ self: me, peers: existing, iceServers, recording: rec, nex: nexInfo }) => {
       iceServersRef.current = iceServers;
       setSelf(me);
       setRecording(rec);
+      if (nexInfo) setNex(nexInfo);
       setPhase('in-call');
       existing.forEach((peer) => createPeer(peer, true)); // quem entra oferece
     });
@@ -161,6 +166,7 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
     socket.on('meet:peer-left', ({ id }) => closePeer(id));
     socket.on('meet:media', ({ id, media }) => patchPeer(id, { media }));
     socket.on('meet:recording', (rec) => setRecording(rec));
+    socket.on('meet:nex', ({ on }) => setNex((n) => ({ ...n, listening: Boolean(on) })));
     socket.on('meet:ended', ({ by }) => {
       setEndedBy(by);
       setPhase('ended');
@@ -173,6 +179,7 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
       for (const { pc } of pcs.current.values()) pc.close();
       pcs.current.clear();
       setPeers({});
+      setSocket(null);
     };
   }, [enabled, code, name, token, createPeer, handleSignal, closePeer, patchPeer]);
 
@@ -192,10 +199,22 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
   const sendMedia = useCallback((media) => socketRef.current?.emit('meet:media', media), []);
   const setRecordingState = useCallback((on) => socketRef.current?.emit('meet:recording', { on }), []);
   const endForAll = useCallback(() => socketRef.current?.emit('meet:end'), []);
+  /** Pedido ao Nex com resposta (ack do Socket.io). */
+  const nexRequest = useCallback(
+    (event, payload = {}) =>
+      new Promise((resolve) => {
+        const s = socketRef.current;
+        if (!s?.connected) return resolve({ error: 'Sem ligação ao servidor.' });
+        s.timeout(120_000).emit(event, payload, (err, result) => resolve(err ? { error: 'O servidor demorou demais a responder.' } : result ?? {}));
+      }),
+    [],
+  );
+  const sendNexAudio = useCallback((meta, audio) => socketRef.current?.emit('nex:audio', meta, audio), []);
+
   const leave = useCallback(() => {
     socketRef.current?.disconnect();
     setPhase('left');
   }, []);
 
-  return { phase, error, self, peers: Object.values(peers).filter((p) => p.stream), recording, endedBy, setOutgoingVideo, replaceOutgoing, sendMedia, setRecordingState, endForAll, leave };
+  return { phase, error, self, peers: Object.values(peers).filter((p) => p.stream), recording, endedBy, nex, socket, nexRequest, sendNexAudio, setOutgoingVideo, replaceOutgoing, sendMedia, setRecordingState, endForAll, leave };
 }

@@ -98,6 +98,9 @@ services:
       TURN_URLS: ${TURN_URLS:-}
       TURN_SECRET: ${TURN_SECRET:-}
       MEET_MAX_PARTICIPANTS: ${MEET_MAX_PARTICIPANTS:-3}
+      # Nex nas reuniões: transcrição local (serviço "whisper"). MEET_NEX_ENABLED=false desliga.
+      WHISPER_URL: http://whisper:9000
+      MEET_NEX_ENABLED: ${MEET_NEX_ENABLED:-true}
     volumes:
       # Sessão autenticada do WhatsApp: sobrevive a rebuilds/restarts (sem novo QR).
       - whatsapp_session:/app/.wwebjs_auth
@@ -136,6 +139,24 @@ services:
       interval: 15s
       timeout: 5s
       retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Transcrição das reuniões para o Nex (faster-whisper, só CPU; ver whisper/app.py).
+  # Medido (i7, 2 threads, 31 s de fala): small 5,5 s · base 1,9 s. Na 1.ª subida baixa o modelo
+  # (small ~480 MB) para o volume. RAM ~0,6–0,9 GB com o small. Sem porta publicada.
+  # Mais leve: WHISPER_MODEL=base. Servidor maior: medium (bem mais preciso).
+  whisper:
+    build:
+      context: ./whisper
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      WHISPER_THREADS: ${WHISPER_THREADS:-2}
+    volumes:
+      - whisper_models:/models
+    mem_limit: 1500m
+    # Mesma ideia do ollama: usa os 2 vCPU quando estão livres e cede ao resto da stack.
+    cpu_shares: 512
 
   # ---------------------------------------------------------------------------
   # Relé TURN das videochamadas (só sobe com o perfil "meet": COMPOSE_PROFILES=meet).
@@ -200,3 +221,4 @@ volumes:
   mysql_data:
   whatsapp_session:
   ollama_models:
+  whisper_models:

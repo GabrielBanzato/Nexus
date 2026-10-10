@@ -305,6 +305,8 @@ CREATE TABLE IF NOT EXISTS meetings (
   status        ENUM('scheduled', 'live', 'ended') NOT NULL DEFAULT 'scheduled',
   remind_day_sent_at  DATETIME NULL COMMENT 'Lembrete do dia enviado (ou dispensado)',
   remind_hour_sent_at DATETIME NULL COMMENT 'Lembrete de 1h antes enviado (ou dispensado)',
+  nex_insights  JSON          NULL COMMENT 'Nex: dores, dúvidas, objeções, sinais e dica da reunião',
+  nex_updated_at DATETIME     NULL,
   started_at    DATETIME      NULL,
   ended_at      DATETIME      NULL,
   created_by    INT UNSIGNED  NULL,
@@ -458,3 +460,22 @@ CREATE TABLE IF NOT EXISTS admin_alerts (
   CONSTRAINT fk_alerts_actor FOREIGN KEY (actor_id) REFERENCES users (id) ON DELETE SET NULL,
   CONSTRAINT fk_alerts_acked_by FOREIGN KEY (acked_by) REFERENCES users (id) ON DELETE SET NULL
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------------------------------
+-- Nex nas reuniões: transcrição (Whisper), em pedaços de ~15s
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS meeting_transcripts (
+  id            INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  meeting_id    INT UNSIGNED  NOT NULL,
+  speaker_role  ENUM('staff', 'guest') NOT NULL COMMENT 'staff = vendedor/equipe; guest = cliente',
+  speaker_name  VARCHAR(80)   NOT NULL,
+  offset_ms     INT UNSIGNED  NOT NULL COMMENT 'Desde a entrada de quem transcreve (ordem da conversa)',
+  text          TEXT          NOT NULL,
+  created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (id),
+  KEY idx_transcripts_meeting (meeting_id, offset_ms),
+  CONSTRAINT fk_transcripts_meeting FOREIGN KEY (meeting_id) REFERENCES meetings (id) ON DELETE CASCADE
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci;

@@ -122,7 +122,7 @@ const COPY = {
     ],
     alvo: { alimentacao: 'restaurantes', varejo: 'lojas', servicos: 'empresas de serviço' },
     dor: {
-      alimentacao: 'comandas, delivery e caixa num lugar só',
+      alimentacao: 'comandas, delivery e caixa em um lugar só',
       varejo: 'estoque da loja e do site sempre sincronizados',
       servicos: 'agenda, orçamentos e financeiro juntos',
     },

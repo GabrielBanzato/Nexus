@@ -111,7 +111,7 @@ export default async function whatsappRoutes(app) {
   // Desliga o número atual (ex.: trocar de telemóvel). Em seguida é gerado um QR novo.
   app.post('/api/whatsapp/logout', sessionOnly, async (request) => {
     const done = await requireService().logout();
-    if (!done) throw new AppError(409, 'CONFLICT', 'Não há nenhum número ligado neste momento.');
+    if (!done) throw new AppError(409, 'CONFLICT', 'Não há nenhum número conectado neste momento.');
     await logActivity(request, { action: 'whatsapp.logout' });
     return { data: requireService().getState() };
   });
@@ -258,7 +258,7 @@ function toHttpError(err, client) {
     case 'WHATSAPP_DISABLED':
       return disabled();
     case 'WHATSAPP_NOT_READY':
-      return new AppError(503, err.code, 'O WhatsApp da empresa não está ligado. Peça ao admin para ler o QR Code.');
+      return new AppError(503, err.code, 'O WhatsApp da empresa não está conectado. Peça ao admin para ler o QR Code.');
     case 'NO_PHONE':
       return new AppError(422, err.code, err.message);
     case 'NOT_ON_WHATSAPP':

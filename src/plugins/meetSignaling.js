@@ -81,6 +81,9 @@ export function registerMeetSignaling(app, io, { nex = null } = {}) {
       peers: inRoom.map(peerInfo),
       iceServers: iceServers(socket.data.user?.id ?? `guest-${socket.id}`),
       recording: recording.get(meetingId) ?? null,
+      // Há relé TURN? Sem ele, redes que bloqueiam a ligação direta (4G, Wi-Fi corporativo) ficam
+      // eternamente "Conectando..." — o ecrã explica isso à equipe.
+      relay: Boolean(config.meet.turnUrls.length && config.meet.turnSecret),
       nex: nex ? { available: nex.available, listening: nex.isListening(meetingId) } : { available: false, listening: false },
       meeting: { title: socket.data.meeting.title, host_name: socket.data.meeting.host_name },
     });

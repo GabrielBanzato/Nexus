@@ -626,7 +626,7 @@ function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify,
             className="flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-red-900/60 bg-red-950/20 text-sm font-semibold text-red-200 transition hover:bg-red-950/50 hover:text-white disabled:cursor-wait disabled:opacity-60"
           >
             {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Handshake className="size-4" />}
-            {busy ? 'A qualificar...' : 'Qualificar para o CRM'}
+            {busy ? 'Qualificando...' : 'Qualificar para o CRM'}
           </button>
         )}
 
@@ -661,7 +661,7 @@ function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify,
               onClick={() => onRequalify(lead)}
               disabled={busy}
               title="Requalificar: volta a Qualificado e entra no topo de Triagem/Novo do pipeline"
-              aria-label={busy ? `A requalificar ${lead.name}` : `Requalificar ${lead.name}`}
+              aria-label={busy ? `Requalificando ${lead.name}` : `Requalificar ${lead.name}`}
               className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-emerald-900/60 bg-emerald-950/20 text-emerald-400 transition hover:bg-emerald-950/50 hover:text-emerald-200 disabled:cursor-wait disabled:opacity-60"
             >
               <RefreshCw className={`size-4 ${busy ? 'animate-spin' : ''}`} />

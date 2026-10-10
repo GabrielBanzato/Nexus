@@ -147,7 +147,7 @@ export async function ensureBootstrapAdmin(logger) {
 
   const { adminEmail, adminName, adminPassword } = config.auth;
   if (!adminPassword) {
-    throw new Error('Nenhum utilizador cadastrado. Defina ADMIN_PASSWORD (e ADMIN_EMAIL) para criar o primeiro admin.');
+    throw new Error('Nenhum usuário cadastrado. Defina ADMIN_PASSWORD (e ADMIN_EMAIL) para criar o primeiro admin.');
   }
 
   await createUser({ name: adminName, email: adminEmail, password: adminPassword, role: 'admin' });

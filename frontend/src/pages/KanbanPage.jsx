@@ -146,7 +146,7 @@ function AddTaskInline({ column, onAdd }) {
           }
           if (e.key === 'Escape') setOpen(false);
         }}
-        placeholder="Título da tarefa (Enter para guardar)"
+        placeholder="Título da tarefa (Enter para salvar)"
         className={cx(inputClass, 'h-auto resize-none py-2')}
       />
       <div className="flex gap-2">
@@ -270,7 +270,7 @@ function TaskEditor({ task, onClose, onSave, onMove, onDelete, canDelete }) {
               Cancelar
             </Button>
             <Button type="submit" form="task-editor" loading={saving}>
-              Guardar
+              Salvar
             </Button>
           </>
         }

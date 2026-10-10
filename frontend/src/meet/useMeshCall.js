@@ -36,6 +36,7 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
   // Nex: disponível neste servidor? A transcrever agora? (todos veem o aviso, como na gravação)
   const [nex, setNex] = useState({ available: false, listening: false });
   const [socket, setSocket] = useState(null); // o painel do Nex escuta os eventos dele
+  const [relay, setRelay] = useState(true); // o servidor tem relé TURN configurado?
 
   const socketRef = useRef(null);
   const pcs = useRef(new Map()); // id → { pc, stream, pending: RTCIceCandidateInit[] }
@@ -150,8 +151,9 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
     });
     socket.on('meet:waiting', () => setPhase('waiting'));
     socket.on('meet:full', () => setPhase('full'));
-    socket.on('meet:joined', ({ self: me, peers: existing, iceServers, recording: rec, nex: nexInfo }) => {
+    socket.on('meet:joined', ({ self: me, peers: existing, iceServers, recording: rec, nex: nexInfo, relay: hasRelay }) => {
       iceServersRef.current = iceServers;
+      setRelay(hasRelay !== false);
       setSelf(me);
       setRecording(rec);
       if (nexInfo) setNex(nexInfo);
@@ -204,7 +206,7 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
     (event, payload = {}) =>
       new Promise((resolve) => {
         const s = socketRef.current;
-        if (!s?.connected) return resolve({ error: 'Sem ligação ao servidor.' });
+        if (!s?.connected) return resolve({ error: 'Sem conexão ao servidor.' });
         s.timeout(120_000).emit(event, payload, (err, result) => resolve(err ? { error: 'O servidor demorou demais a responder.' } : result ?? {}));
       }),
     [],
@@ -216,5 +218,5 @@ export function useMeshCall({ code, name, token, localStream, enabled }) {
     setPhase('left');
   }, []);
 
-  return { phase, error, self, peers: Object.values(peers).filter((p) => p.stream), recording, endedBy, nex, socket, nexRequest, sendNexAudio, setOutgoingVideo, replaceOutgoing, sendMedia, setRecordingState, endForAll, leave };
+  return { phase, error, self, peers: Object.values(peers).filter((p) => p.stream), recording, endedBy, relay, nex, socket, nexRequest, sendNexAudio, setOutgoingVideo, replaceOutgoing, sendMedia, setRecordingState, endForAll, leave };
 }

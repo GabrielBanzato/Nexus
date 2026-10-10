@@ -60,7 +60,7 @@ export function findDealById(id) {
  * recebido. Sem `viewer` falha (fail-closed) em vez de devolver o quadro da equipe toda.
  */
 export async function getDealBoard({ viewer, ownerId, q } = {}) {
-  if (!viewer?.id) throw new Error('getDealBoard: viewer obrigatório (isolamento por utilizador).');
+  if (!viewer?.id) throw new Error('getDealBoard: viewer obrigatório (isolamento por usuário).');
   const scopedOwnerId = viewer.role === 'admin' ? ownerId : viewer.id;
 
   const query = withNames(db('deals as d')).orderBy('d.stage').orderBy('d.position').orderBy('d.id');

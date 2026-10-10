@@ -41,7 +41,7 @@ Regras:
 - Objeções: medos, receios e "mas..." do Cliente (preço, risco, confiança, precisar de outra pessoa para decidir).
 - Sinais de compra: o Cliente mostra que quer avançar (prazo desejado, "gostei", quem decide, quando quer começar).
 - Devolva apenas pontos NOVOS: o que já está em "Já anotado" não volta a aparecer, nem com outras palavras.
-- Nada inventado: se o trecho não traz nada novo numa categoria, devolva a lista vazia.
+- Nada inventado: se o trecho não traz nada novo em uma categoria, devolva a lista vazia.
 - Frases curtas, em português do Brasil, como anotações para bater o olho durante a conversa.
 - "tip": a melhor próxima fala ou pergunta do vendedor agora, para responder a uma dúvida, tratar uma objeção ou avançar para o fechamento. Sem números nem preços inventados.`;
 

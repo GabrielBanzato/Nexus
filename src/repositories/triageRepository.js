@@ -281,7 +281,7 @@ export async function requalifyLead(leadId, user) {
     .first();
   if (!current) throw notFound('Lead');
   if (current.deal_stage === 'won') throw conflict('Este lead já virou cliente (negócio ganho); não há o que requalificar.');
-  if (OPEN_STAGES.includes(current.deal_stage)) throw conflict('Este lead já está no pipeline, num estágio em aberto.');
+  if (OPEN_STAGES.includes(current.deal_stage)) throw conflict('Este lead já está no pipeline, em um estágio em aberto.');
 
   const triageFields = {
     status: 'qualified',

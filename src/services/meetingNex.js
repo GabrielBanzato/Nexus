@@ -58,7 +58,7 @@ export function createMeetingNex({ transcriber, getModel, io, logger, timeZone }
   async function stateOf(meetingId) {
     let state = meetings.get(meetingId);
     if (state) return state;
-    state = { uploader: null, listening: false, pending: [], recent: [], lastAnalysisAt: 0, analyzing: false, insights: null, context: '', lang: 'pt', dealId: null };
+    state = { uploader: null, listening: false, pending: [], recent: [], lastAnalysisAt: 0, analyzing: false, insights: null, context: '', lang: 'pt', dealId: null, lastBySpeaker: new Map() };
     meetings.set(meetingId, state);
     const meeting = await findMeetingById(meetingId);
     state.dealId = meeting?.deal_id ?? null;
@@ -105,7 +105,10 @@ export function createMeetingNex({ transcriber, getModel, io, logger, timeZone }
   async function transcribeChunk(meetingId, state, speaker, offsetMs, audio) {
     let result;
     try {
-      result = await transcriber.transcribe(audio, { language: state.lang, prompt: VOCAB[state.lang] ?? VOCAB.pt });
+      // Vocabulário + o fim da fala anterior da mesma pessoa: o pedaço de 15 s corta frases a meio,
+      // e com o contexto o Whisper acerta melhor as palavras do começo.
+      const previous = state.lastBySpeaker.get(speaker.name) ?? '';
+      result = await transcriber.transcribe(audio, { language: state.lang, prompt: `${VOCAB[state.lang] ?? VOCAB.pt} ${previous}`.trim() });
     } catch (err) {
       logger.warn({ err: err.message, meetingId }, 'Nex: falha ao transcrever um trecho');
       if (err.status !== 422) toStaff(meetingId, 'nex:status', { transcription: 'error', error: err.message });
@@ -113,6 +116,7 @@ export function createMeetingNex({ transcriber, getModel, io, logger, timeZone }
     }
     const text = String(result.text ?? '').replace(/\s+/g, ' ').trim();
     if (text.length < 2 || HALLUCINATION.test(text)) return;
+    state.lastBySpeaker.set(speaker.name, text.slice(-200));
     const [id] = await db('meeting_transcripts').insert({ meeting_id: meetingId, speaker_role: speaker.role, speaker_name: speaker.name.slice(0, 80), offset_ms: Math.max(0, Math.round(offsetMs)), text });
     const segment = { id, role: speaker.role, name: speaker.name, offset_ms: offsetMs, text };
     toStaff(meetingId, 'nex:transcript', segment);
@@ -176,7 +180,6 @@ export function createMeetingNex({ transcriber, getModel, io, logger, timeZone }
       if (audio.length < MIN_AUDIO_BYTES || audio.length > MAX_AUDIO_BYTES) return;
       const state = await stateOf(meetingId);
       if (state.uploader && state.uploader !== socket.id && nsp().sockets.has(state.uploader)) return;
-      if (state.uploader !== socket.id) logger.info({ meetingId, by: socket.data.name }, 'Nex: a transcrever a reunião');
       if (state.uploader !== socket.id) logger.info({ meetingId, by: socket.data.name }, 'Nex: a transcrever a reunião');
       state.uploader = socket.id;
       setListening(meetingId, state, true);

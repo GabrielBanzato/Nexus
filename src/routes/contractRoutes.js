@@ -50,7 +50,7 @@ export default async function contractRoutes(app) {
   app.put('/api/contracts/:userId', { schema: contractSchema }, async (request) => {
     const { userId } = request.params;
     const exists = (await listContracts()).some((c) => c.user_id === userId);
-    if (!exists) throw notFound('Utilizador');
+    if (!exists) throw notFound('Usuário');
     const contract = await upsertContract(userId, request.body, request.currentUser.id);
     await logActivity(request, { action: 'contract.update', entityType: 'user', entityId: userId, details: request.body });
     return { data: contract };

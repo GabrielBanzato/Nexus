@@ -42,11 +42,11 @@ function send(reply, statusCode, code, message, details) {
 function fromMysql(err) {
   switch (err.code) {
     case 'ER_DUP_ENTRY':
-      return [409, 'DUPLICATE', 'Já existe um registo com estes dados.'];
+      return [409, 'DUPLICATE', 'Já existe um registro com estes dados.'];
     case 'ER_NO_REFERENCED_ROW_2':
-      return [422, 'INVALID_REFERENCE', 'Um dos IDs relacionados (utilizador, cliente ou lead) não existe.'];
+      return [422, 'INVALID_REFERENCE', 'Um dos IDs relacionados (usuário, cliente ou lead) não existe.'];
     case 'ER_ROW_IS_REFERENCED_2':
-      return [409, 'IN_USE', 'O registo está a ser usado por outros dados e não pode ser removido.'];
+      return [409, 'IN_USE', 'O registro está sendo usado por outros dados e não pode ser removido.'];
     default:
       return null;
   }

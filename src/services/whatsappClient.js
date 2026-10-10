@@ -437,7 +437,7 @@ export function createWhatsAppClient({
       attempts = 0;
       await destroyClient();
       wipeSession();
-      setState({ status: 'disconnected', qr: null, phone: null, error: 'A ligação não voltou no reinício diário: leia o QR Code de novo.' });
+      setState({ status: 'disconnected', qr: null, phone: null, error: 'A conexão não voltou no reinício diário: leia o QR Code de novo.' });
       boot();
       return 'reset';
     },
@@ -452,7 +452,7 @@ export function createWhatsAppClient({
      */
     async sendText({ jid, number }, text) {
       if (!client || state.status !== 'ready') {
-        throw Object.assign(new Error('O WhatsApp não está ligado.'), { code: 'WHATSAPP_NOT_READY' });
+        throw Object.assign(new Error('O WhatsApp não está conectado.'), { code: 'WHATSAPP_NOT_READY' });
       }
       let chatId = jid;
       if (!chatId) {

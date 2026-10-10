@@ -52,7 +52,7 @@ export default async function timelineRoutes(app) {
         details: { text: request.body.text.trim() },
       });
       publish(entity.topic, request);
-      return reply.code(201).send({ data: { message: 'Nota registada.' } });
+      return reply.code(201).send({ data: { message: 'Nota registrada.' } });
     });
   }
 }

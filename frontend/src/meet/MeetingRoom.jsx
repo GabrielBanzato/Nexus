@@ -38,7 +38,7 @@ const cx = (...c) => c.filter(Boolean).join(' ');
 const ERRORS = {
   NOT_FOUND: { title: 'Sala não encontrada', text: 'Confira o link que recebeu. Se o problema continuar, peça um novo link a quem o convidou.' },
   ENDED: { title: 'Esta reunião terminou', text: 'A sala foi encerrada. Se precisar, peça um novo link a quem o convidou.' },
-  NAME_REQUIRED: { title: 'Indique o seu nome', text: 'Volte e escreva o seu nome para entrar.' },
+  NAME_REQUIRED: { title: 'Informe seu nome', text: 'Volte e escreva seu nome para entrar.' },
 };
 
 function readName() {
@@ -175,8 +175,18 @@ function PeerAudioControl({ name, audio, onChange }) {
 
 const DEFAULT_AUDIO = { volume: 1, muted: false };
 
-function Tile({ name, stream, camOff, micOff, mirrored, isSelf, state, onElement, spotlight, audio = DEFAULT_AUDIO, onAudioChange }) {
+/** Ligação a um participante presa há mais de SLOW_CONNECT_MS: explica em vez de girar para sempre. */
+const SLOW_CONNECT_MS = 20_000;
+
+function Tile({ name, stream, camOff, micOff, mirrored, isSelf, state, onElement, spotlight, audio = DEFAULT_AUDIO, onAudioChange, relayMissing }) {
   const connecting = !isSelf && state && state !== 'connected';
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!connecting) return undefined;
+    const timer = setTimeout(() => setSlow(true), SLOW_CONNECT_MS);
+    return () => clearTimeout(timer);
+  }, [connecting]);
   return (
     <div className={cx('relative overflow-hidden rounded-2xl bg-[#1a1a1a] ring-1 ring-neutral-800', spotlight ? 'min-h-0' : 'aspect-video')}>
       <StreamVideo stream={stream} muted={isSelf || audio.muted} volume={audio.volume} mirrored={mirrored} onElement={onElement} className={camOff ? 'invisible' : ''} />
@@ -189,9 +199,18 @@ function Tile({ name, stream, camOff, micOff, mirrored, isSelf, state, onElement
         </div>
       )}
       {connecting && (
-        <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/50 text-sm text-neutral-200">
-          <LoaderCircle className="size-4 animate-spin" />
-          {state === 'failed' || state === 'disconnected' ? 'Ligação instável, a tentar de novo...' : 'A ligar...'}
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 p-4 text-center text-sm text-neutral-200">
+          <span className="flex items-center gap-2">
+            <LoaderCircle className="size-4 animate-spin" />
+            {state === 'failed' || state === 'disconnected' ? 'Conexão instável, tentando de novo...' : 'Conectando...'}
+          </span>
+          {slow && (
+            <span className="max-w-xs text-xs text-neutral-400">
+              {relayMissing
+                ? 'A rede de um de vocês está bloqueando a conexão direta (comum no 4G e em Wi-Fi de empresa). Para funcionar em qualquer rede, configure o relé TURN do servidor (coturn).'
+                : 'A conexão está demorando mais que o normal. Verifique a internet ou tente outra rede (Wi-Fi ou 4G).'}
+            </span>
+          )}
         </div>
       )}
       <div className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-lg bg-black/60 px-2 py-1 text-xs font-medium text-white backdrop-blur">
@@ -225,7 +244,7 @@ function ControlButton({ on, onClick, iconOn: IconOn, iconOff: IconOff, label, d
 
 /** Liga/desliga o desfoque do fundo (ativo = destacado a azul, não vermelho: não é um "erro"). */
 function BlurButton({ on, loading, onClick, disabled }) {
-  const label = loading ? 'A preparar o desfoque...' : on ? 'Tirar o desfoque do fundo' : 'Desfocar o fundo';
+  const label = loading ? 'Preparando o desfoque...' : on ? 'Tirar o desfoque do fundo' : 'Desfocar o fundo';
   return (
     <button
       type="button"
@@ -333,7 +352,7 @@ function useMediaDevices(ready) {
 }
 
 const deviceLabel = (device, index, kind) =>
-  device.label || `${kind === 'video' ? 'Câmara' : 'Microfone'} ${index + 1}`;
+  device.label || `${kind === 'video' ? 'Câmera' : 'Microfone'} ${index + 1}`;
 
 /** Seletores de câmara e microfone (entrada e durante a chamada). */
 function DevicePicker({ devices, current, onChange, busy, error, className }) {
@@ -341,7 +360,7 @@ function DevicePicker({ devices, current, onChange, busy, error, className }) {
   return (
     <div className={cx('space-y-2', className)}>
       {[
-        { kind: 'video', icon: Video, label: 'Câmara', list: devices.video },
+        { kind: 'video', icon: Video, label: 'Câmera', list: devices.video },
         { kind: 'audio', icon: Mic, label: 'Microfone', list: devices.audio },
       ].map(({ kind, icon: Icon, label, list }) => (
         <label key={kind} className="flex items-center gap-2">
@@ -354,8 +373,8 @@ function DevicePicker({ devices, current, onChange, busy, error, className }) {
             onChange={(e) => onChange(kind, e.target.value)}
             className={select}
           >
-            {list.length === 0 && <option value="">{kind === 'video' ? 'Nenhuma câmara encontrada' : 'Nenhum microfone encontrado'}</option>}
-            {!current[kind] && list.length > 0 && <option value="">Escolha {kind === 'video' ? 'a câmara' : 'o microfone'}</option>}
+            {list.length === 0 && <option value="">{kind === 'video' ? 'Nenhuma câmera encontrada' : 'Nenhum microfone encontrado'}</option>}
+            {!current[kind] && list.length > 0 && <option value="">Escolha {kind === 'video' ? 'a câmera' : 'o microfone'}</option>}
             {list.map((d, i) => (
               <option key={d.deviceId} value={d.deviceId}>
                 {deviceLabel(d, i, kind)}
@@ -483,7 +502,7 @@ export default function MeetingRoom({ code }) {
       }
       saveDevice(kind, deviceId);
     } catch {
-      setDeviceError(`Não foi possível usar ${kind === 'video' ? 'esta câmara' : 'este microfone'}. Ela pode estar em uso noutro programa.`);
+      setDeviceError(`Não foi possível usar ${kind === 'video' ? 'esta câmera' : 'este microfone'}. Ela pode estar em uso em outro programa.`);
       if (old.some((t) => t.readyState === 'ended') && previousId) {
         track = (await open(previousId).catch(() => null))?.getTracks()[0] ?? null; // volta à anterior
       }
@@ -680,11 +699,12 @@ export default function MeetingRoom({ code }) {
         state: p.state,
         screen: Boolean(p.media?.screen),
         audio: peerAudio[p.id] ?? DEFAULT_AUDIO,
+        relayMissing: Boolean(self?.staff) && !call.relay,
         onAudioChange: (audio) => setPeerAudio((all) => ({ ...all, [p.id]: audio })),
       })),
     ];
     return list;
-  }, [self, name, screen, screenStream, outStream, cam, mic, peers, peerAudio]);
+  }, [self, name, screen, screenStream, outStream, cam, mic, peers, peerAudio, call.relay]);
 
   tilesRef.current = tiles.map((t) => ({ video: t.isSelf ? selfVideoRef.current : videoEls.current.get(t.id) ?? null, name: t.name, camOff: t.camOff }));
 
@@ -695,7 +715,7 @@ export default function MeetingRoom({ code }) {
     return (
       <Shell title={info?.title}>
         <Centered icon={PhoneOff} title="A reunião terminou" text={call.endedBy ? `Encerrada por ${call.endedBy}.` : undefined}>
-          {savedRecording && <p className="text-sm text-emerald-300">A gravação foi guardada no seu computador.</p>}
+          {savedRecording && <p className="text-sm text-emerald-300">A gravação foi salva no seu computador.</p>}
         </Centered>
       </Shell>
     );
@@ -710,7 +730,7 @@ export default function MeetingRoom({ code }) {
   if (infoError) {
     return (
       <Shell>
-        <Centered title="Não foi possível abrir a sala" text="Verifique a sua ligação à internet e tente de novo." />
+        <Centered title="Não foi possível abrir a sala" text="Verifique sua conexão com a internet e tente de novo." />
       </Shell>
     );
   }
@@ -718,7 +738,7 @@ export default function MeetingRoom({ code }) {
     return (
       <Shell title={info?.title}>
         <Centered icon={PhoneOff} title="Você saiu da reunião">
-          {savedRecording && <p className="mb-4 text-sm text-emerald-300">A gravação foi guardada no seu computador.</p>}
+          {savedRecording && <p className="mb-4 text-sm text-emerald-300">A gravação foi salva no seu computador.</p>}
           <button type="button" onClick={() => window.location.reload()} className="rounded-xl bg-red-800 px-5 py-2.5 text-sm font-semibold text-white hover:bg-red-700">
             Voltar a entrar
           </button>
@@ -745,12 +765,12 @@ export default function MeetingRoom({ code }) {
             <StreamVideo stream={outStream} muted mirrored className={!cam || !effectiveVideo ? 'invisible' : ''} />
             {(!cam || !effectiveVideo) && (
               <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">
-                {!localStream?.getVideoTracks().length ? 'Sem câmara' : !cam ? 'Câmara desligada' : 'A preparar o desfoque...'}
+                {!localStream?.getVideoTracks().length ? 'Sem câmera' : !cam ? 'Câmera desligada' : 'Preparando o desfoque...'}
               </div>
             )}
             <div className="absolute inset-x-0 bottom-3 flex justify-center gap-3">
               <ControlButton on={mic} onClick={() => setMic((m) => !m)} iconOn={Mic} iconOff={MicOff} label={mic ? 'Desligar microfone' : 'Ligar microfone'} disabled={!localStream?.getAudioTracks().length} />
-              <ControlButton on={cam} onClick={() => setCam((c) => !c)} iconOn={Video} iconOff={VideoOff} label={cam ? 'Desligar câmara' : 'Ligar câmara'} disabled={!localStream?.getVideoTracks().length} />
+              <ControlButton on={cam} onClick={() => setCam((c) => !c)} iconOn={Video} iconOff={VideoOff} label={cam ? 'Desligar câmera' : 'Ligar câmera'} disabled={!localStream?.getVideoTracks().length} />
               <BlurButton on={blurOn} loading={blurLoading} onClick={toggleBlur} disabled={!rawVideo} />
             </div>
           </div>
@@ -764,13 +784,13 @@ export default function MeetingRoom({ code }) {
 
             {mediaError === 'denied' && (
               <p className="rounded-xl bg-amber-950/40 px-3 py-2 text-sm text-amber-200 ring-1 ring-amber-900/50">
-                O navegador bloqueou a câmara e o microfone. Clique no cadeado da barra de endereço, permita e recarregue a página.
+                O navegador bloqueou a câmera e o microfone. Clique no cadeado da barra de endereço, permita e recarregue a página.
               </p>
             )}
             {mediaError === 'unavailable' && (
-              <p className="rounded-xl bg-amber-950/40 px-3 py-2 text-sm text-amber-200 ring-1 ring-amber-900/50">Não encontrámos câmara nem microfone: vai entrar só a ver e ouvir.</p>
+              <p className="rounded-xl bg-amber-950/40 px-3 py-2 text-sm text-amber-200 ring-1 ring-amber-900/50">Não encontramos câmera nem microfone: você vai entrar só para ver e ouvir.</p>
             )}
-            {mediaError === 'no-camera' && <p className="text-sm text-neutral-400">Sem câmara disponível: vai entrar só com áudio.</p>}
+            {mediaError === 'no-camera' && <p className="text-sm text-neutral-400">Sem câmera disponível: vai entrar só com áudio.</p>}
             {blurError && <p className="text-sm text-amber-300">{blurError}</p>}
 
             {(localStream || deviceError) && (
@@ -786,7 +806,7 @@ export default function MeetingRoom({ code }) {
               <>
                 {!staffName && (
                   <label className="block">
-                    <span className="mb-1.5 block text-sm font-medium text-neutral-300">O seu nome</span>
+                    <span className="mb-1.5 block text-sm font-medium text-neutral-300">Seu nome</span>
                     <input
                       value={name}
                       onChange={(e) => setName(e.target.value)}
@@ -805,7 +825,7 @@ export default function MeetingRoom({ code }) {
                   className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-red-800 text-sm font-semibold text-white shadow-lg shadow-red-950/40 transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {connecting && <LoaderCircle className="size-4 animate-spin" />}
-                  {connecting ? 'A entrar...' : 'Entrar na reunião'}
+                  {connecting ? 'Entrando...' : 'Entrar na reunião'}
                 </button>
                 {staffName && (
                   <p className="text-xs text-neutral-500">
@@ -843,13 +863,13 @@ export default function MeetingRoom({ code }) {
       {call.nex.listening && (
         <div className="flex items-center justify-center gap-2 bg-violet-950/70 px-4 py-1.5 text-xs font-medium text-violet-100" role="status">
           <Wand2 className="size-3.5" />
-          O assistente Nex está a transcrever esta conversa para apoiar o atendimento.
+          O assistente Nex está transcrevendo esta conversa para apoiar o atendimento.
         </div>
       )}
       {recording && (
         <div className="flex items-center justify-center gap-2 bg-red-950/80 px-4 py-1.5 text-xs font-medium text-red-100" role="status">
           <Circle className="size-2.5 animate-pulse fill-red-500 text-red-500" />
-          Esta reunião está a ser gravada por {recording.by}.
+          Esta reunião está sendo gravada por {recording.by}.
         </div>
       )}
       <div className="flex min-h-0 flex-1">
@@ -891,27 +911,27 @@ export default function MeetingRoom({ code }) {
 
           {showDevices && (
             <div className="mx-auto mb-2 w-full max-w-sm rounded-2xl bg-[#1a1a1a] p-3 shadow-2xl ring-1 ring-neutral-800">
-              <p className="mb-2 text-xs font-semibold text-neutral-300">Câmara e microfone</p>
+              <p className="mb-2 text-xs font-semibold text-neutral-300">Câmera e microfone</p>
               <DevicePicker devices={devices} current={currentDevices} onChange={switchDevice} busy={switching} error={deviceError} />
             </div>
           )}
           <footer className="flex flex-wrap items-center justify-center gap-3 border-t border-neutral-800/80 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             <span className="mr-auto hidden text-sm text-neutral-400 tabular-nums sm:block">{clock}</span>
             <ControlButton on={mic} onClick={() => setMic((m) => !m)} iconOn={Mic} iconOff={MicOff} label={mic ? 'Desligar microfone' : 'Ligar microfone'} disabled={!localStream?.getAudioTracks().length} />
-            <ControlButton on={cam} onClick={() => setCam((c) => !c)} iconOn={Video} iconOff={VideoOff} label={cam ? 'Desligar câmara' : 'Ligar câmara'} disabled={!localStream?.getVideoTracks().length || Boolean(screen)} />
+            <ControlButton on={cam} onClick={() => setCam((c) => !c)} iconOn={Video} iconOff={VideoOff} label={cam ? 'Desligar câmera' : 'Ligar câmera'} disabled={!localStream?.getVideoTracks().length || Boolean(screen)} />
             <BlurButton on={blurOn} loading={blurLoading} onClick={toggleBlur} disabled={!rawVideo || Boolean(screen)} />
             {localStream && (
-              <ControlButton on={!showDevices} onClick={() => setShowDevices((v) => !v)} iconOn={Settings} iconOff={Settings} label="Escolher câmara e microfone" />
+              <ControlButton on={!showDevices} onClick={() => setShowDevices((v) => !v)} iconOn={Settings} iconOff={Settings} label="Escolher câmera e microfone" />
             )}
             {/* Partilha de ecrã: não existe nos navegadores de telemóvel. */}
             {navigator.mediaDevices?.getDisplayMedia && (
-              <ControlButton on={!screen} onClick={screen ? stopScreen : startScreen} iconOn={MonitorUp} iconOff={MonitorUp} label={screen ? 'Parar de partilhar o ecrã' : 'Partilhar ecrã'} />
+              <ControlButton on={!screen} onClick={screen ? stopScreen : startScreen} iconOn={MonitorUp} iconOff={MonitorUp} label={screen ? 'Parar de compartilhar a tela' : 'Compartilhar tela'} />
             )}
             {isStaff && recordingSupported() && (
               <button
                 type="button"
                 onClick={recorder ? stopRecording : startRecording}
-                title={recorder ? 'Parar gravação (o ficheiro é guardado no seu computador)' : 'Gravar (todos são avisados; o ficheiro fica no seu computador)'}
+                title={recorder ? 'Parar gravação (o arquivo é salvo no seu computador)' : 'Gravar (todos são avisados; o arquivo fica no seu computador)'}
                 className={cx(
                   'flex h-12 items-center gap-2 rounded-full px-4 text-sm font-semibold transition active:scale-95',
                   recorder ? 'bg-red-700 text-white hover:bg-red-600' : 'bg-neutral-800 text-white hover:bg-neutral-700',
@@ -946,7 +966,7 @@ export default function MeetingRoom({ code }) {
               </button>
             )}
           </footer>
-          {recorder && <p className="pb-2 text-center text-[11px] text-neutral-500">A gravar: mantenha esta aba aberta até terminar.</p>}
+          {recorder && <p className="pb-2 text-center text-[11px] text-neutral-500">Gravando: mantenha esta aba aberta até terminar.</p>}
           {blurError && <p className="pb-2 text-center text-xs text-amber-300">{blurError}</p>}
         </div>
         {/* Nex: coluna fixa à direita no computador; no telemóvel abre por cima (botão na barra). */}

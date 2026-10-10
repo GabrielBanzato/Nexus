@@ -51,7 +51,7 @@ export function createAckSync({ whatsapp, io, logger }) {
    * Com `report`, devolve o que viu e fez (diagnóstico do admin).
    */
   async function refresh(client, { force = false, report = null } = {}) {
-    if (!whatsapp || !client?.whatsapp_jid) return report && Object.assign(report, { skipped: 'sem WhatsApp ou contacto sem conversa' });
+    if (!whatsapp || !client?.whatsapp_jid) return report && Object.assign(report, { skipped: 'sem WhatsApp ou contato sem conversa' });
     const now = Date.now();
     if (!force && now - (lastRefresh.get(client.id) ?? 0) < REFRESH_EVERY_MS) return;
     lastRefresh.set(client.id, now);

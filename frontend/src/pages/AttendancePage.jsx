@@ -230,7 +230,7 @@ function ConversationItem({ conversation, active, unread, aiSuggesting, unassign
           </span>
           <span className="mt-0.5 flex items-center gap-2">
             {aiSuggesting ? (
-              <span className="min-w-0 flex-1 truncate text-xs text-sky-400 italic">✨ Nex a preparar uma sugestão...</span>
+              <span className="min-w-0 flex-1 truncate text-xs text-sky-400 italic">✨ Nex preparando uma sugestão...</span>
             ) : (
               <span className={cx('min-w-0 flex-1 truncate text-xs', unread ? 'text-neutral-200' : 'text-neutral-500')}>{lastPreview(conversation)}</span>
             )}
@@ -253,7 +253,7 @@ function ConversationItem({ conversation, active, unread, aiSuggesting, unassign
 }
 
 const SCOPES = [
-  { value: 'all', label: 'Ver tudo', icon: Eye, title: 'Tudo o que chega ao número, como no app do telemóvel' },
+  { value: 'all', label: 'Ver tudo', icon: Eye, title: 'Tudo o que chega ao número, como no app do celular' },
   { value: 'mine', label: 'Foco', icon: Target, title: 'Só as empresas atribuídas a você' },
 ];
 
@@ -305,7 +305,7 @@ function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect
         {!realtime && (
           <p className="flex items-center gap-1.5 text-xs text-amber-300/90" role="status">
             <WifiOff className="size-3.5" />
-            Tempo real indisponível. A tentar religar...
+            Tempo real indisponível. Tentando reconectar...
           </p>
         )}
       </div>
@@ -314,7 +314,7 @@ function Sidebar({ hidden, search, onSearch, query, selectedId, unread, onSelect
         {query.isError ? (
           <div className="p-4"><ErrorState error={query.error} onRetry={query.refetch} /></div>
         ) : query.isLoading ? (
-          <Spinner label="A carregar conversas..." />
+          <Spinner label="Carregando conversas..." />
         ) : conversations.length === 0 ? (
           <EmptyState
             icon={MessagesSquare}
@@ -561,7 +561,7 @@ function VideoCallButton({ conversation, canSend }) {
         open={open}
         onClose={() => !busy && setOpen(false)}
         title={`Videochamada com ${conversation.name}`}
-        description={canSend ? 'O cliente recebe a mensagem pelo WhatsApp, assinada com o seu nome.' : 'O WhatsApp está desconectado: criamos a sala e copiamos o link para você enviar.'}
+        description={canSend ? 'O cliente recebe a mensagem pelo WhatsApp, assinada com seu nome.' : 'O WhatsApp está desconectado: criamos a sala e copiamos o link para você enviar.'}
         footer={
           <>
             <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
@@ -703,7 +703,7 @@ function MessageBubble({ message, mine, onRetry }) {
         <p className="break-words whitespace-pre-wrap">{message.content}</p>
         <p className="mt-1 flex items-center justify-end gap-1 text-[10px] text-neutral-400 tabular-nums">
           {timeFormat.format(new Date(message.created_at))}
-          {message.pending && <Clock className="size-3" aria-label="A enviar" />}
+          {message.pending && <Clock className="size-3" aria-label="Enviando" />}
           {outgoing && !message.pending && !message.failed && <AckTicks ack={message.ack} />}
         </p>
         {message.failed && (
@@ -734,7 +734,7 @@ function AiSuggestionCard({ ai, onUse }) {
         className="mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold text-sky-300 ring-1 ring-sky-900/70 transition hover:bg-sky-950/50 disabled:cursor-wait disabled:opacity-80"
       >
         {busy ? <RefreshCw className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-        {busy ? 'Nex a preparar uma sugestão...' : 'Sugerir resposta com Nex'}
+        {busy ? 'Nex preparando uma sugestão...' : 'Sugerir resposta com Nex'}
       </button>
     );
   }
@@ -768,7 +768,7 @@ function AiSuggestionCard({ ai, onUse }) {
           className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-sky-300 ring-1 ring-sky-900/70 transition hover:bg-sky-950/60 disabled:cursor-wait"
         >
           <RefreshCw className={cx('size-3', busy && 'animate-spin')} />
-          {busy ? 'A gerar...' : 'Gerar outra'}
+          {busy ? 'Gerando...' : 'Gerar outra'}
         </button>
       </div>
     </div>
@@ -850,7 +850,7 @@ function Composer({ disabled, onSend, signature, ai, initialText = '' }) {
           }}
           disabled={disabled}
           aria-label="Mensagem"
-          placeholder={disabled ? 'A carregar a conversa...' : 'Escreva uma mensagem'}
+          placeholder={disabled ? 'Carregando a conversa...' : 'Escreva uma mensagem'}
           className={cx(inputClass, 'block h-auto min-h-10 resize-none py-2.5 leading-5', tooLong && 'border-red-700')}
         />
         {text.length > MAX_LENGTH - 500 && (
@@ -958,7 +958,7 @@ function AckDebugButton({ clientId }) {
         open={open}
         onClose={() => setOpen(false)}
         title="Diagnóstico do visto"
-        description="O que o WhatsApp diz das mensagens enviadas a este contacto. Copie e envie ao suporte."
+        description="O que o WhatsApp diz das mensagens enviadas a este contato. Copie e envie ao suporte."
         size="lg"
         footer={
           <>
@@ -970,7 +970,7 @@ function AckDebugButton({ clientId }) {
         {query.isError ? (
           <ErrorState error={query.error} onRetry={query.refetch} />
         ) : query.isLoading ? (
-          <Spinner label="A perguntar ao WhatsApp..." />
+          <Spinner label="Perguntando ao WhatsApp..." />
         ) : (
           <pre className="max-h-[60vh] overflow-auto rounded-lg bg-[#0d0d0d] p-3 text-[11px] leading-4 whitespace-pre-wrap break-all text-neutral-300">{json}</pre>
         )}
@@ -1132,7 +1132,7 @@ function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, 
           {messages.isError ? (
             <ErrorState error={messages.error} onRetry={messages.refetch} />
           ) : messages.isLoading ? (
-            <Spinner label="A carregar mensagens..." />
+            <Spinner label="Carregando mensagens..." />
           ) : list.length === 0 ? (
             <EmptyState icon={MessagesSquare} title="Ainda não há mensagens" description={canSend ? 'Escreva abaixo para iniciar a conversa pelo WhatsApp.' : 'As mensagens deste cliente aparecem aqui.'} />
           ) : (

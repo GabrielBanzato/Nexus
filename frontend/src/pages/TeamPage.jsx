@@ -139,7 +139,7 @@ function MemberModal({ open, member, onClose }) {
     onSuccess: (user) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       if (editing) toast.success('Membro atualizado', user.name);
-      else toast.success(`${user.name} foi adicionado à equipe`, `Partilhe a senha por um canal seguro. Acesso com ${user.email}.`);
+      else toast.success(`${user.name} foi adicionado à equipe`, `Compartilhe a senha por um canal seguro. Acesso com ${user.email}.`);
       onClose();
     },
     onError: (err) => {
@@ -235,7 +235,7 @@ function MemberModal({ open, member, onClose }) {
               Cancelar
             </Button>
             <Button type="submit" form="member-form" icon={editing ? Check : UserPlus} loading={mutation.isPending}>
-              {editing ? 'Guardar alterações' : 'Adicionar à equipe'}
+              {editing ? 'Salvar alterações' : 'Adicionar à equipe'}
             </Button>
           </>
         }

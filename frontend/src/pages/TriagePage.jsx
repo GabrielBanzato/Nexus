@@ -261,7 +261,7 @@ function DecisionModal({ lead, status, onClose, onDone }) {
                   <Field label="Responsável">
                     {({ id }) => (
                       <Select id={id} value={form.owner_id} onChange={set('owner_id')}>
-                        <option value="">Quem está a triar</option>
+                        <option value="">Quem está triando</option>
                         {users.map((u) => (
                           <option key={u.id} value={u.id}>{u.name}</option>
                         ))}
@@ -550,7 +550,7 @@ function LeadActions({ lead, status, busy, onRequalify, onArchive, onRestore, st
       ) : (
         <IconButton
           icon={Archive}
-          label={`Arquivar ${lead.name}: sai da triagem, o registo é mantido`}
+          label={`Arquivar ${lead.name}: sai da triagem, o registro é mantido`}
           disabled={Boolean(busy)}
           onClick={() => onArchive(lead)}
           className="hover:text-red-400"
@@ -807,7 +807,7 @@ export default function TriagePage({ navigate }) {
     mutationFn: (lead) => archiveTriageLead(lead.id),
     onSuccess: (triage) => {
       queryClient.invalidateQueries({ queryKey: ['triage'] });
-      toast.success('Lead arquivado', `"${triage.name}" saiu da triagem. O registo continua guardado em Arquivado.`, {
+      toast.success('Lead arquivado', `"${triage.name}" saiu da triagem. O registro continua salvo em Arquivado.`, {
         action: { label: 'Desfazer', onClick: () => restoreMutation.mutate(triage) },
       });
     },
@@ -1046,7 +1046,7 @@ export default function TriagePage({ navigate }) {
       {!isAdmin && counts && (
         <p className="flex items-center gap-1.5 text-xs text-neutral-500">
           <UserRound className="size-3.5" />
-          Está a ver a sua fila: {counts.pending} por triar, {counts.on_hold} em espera.
+          Está vendo sua fila: {counts.pending} por triar, {counts.on_hold} em espera.
         </p>
       )}
     </div>

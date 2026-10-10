@@ -27,7 +27,7 @@ export function findTaskById(id) {
  * recebido. Sem `viewer` falha (fail-closed).
  */
 export async function getBoard({ viewer, responsibleId } = {}) {
-  if (!viewer?.id) throw new Error('getBoard: viewer obrigatório (isolamento por utilizador).');
+  if (!viewer?.id) throw new Error('getBoard: viewer obrigatório (isolamento por usuário).');
   const scopedResponsibleId = viewer.role === 'admin' ? responsibleId : viewer.id;
 
   const query = withNames(db('kanban_tasks as k')).orderBy('k.column_name').orderBy('k.position').orderBy('k.id');

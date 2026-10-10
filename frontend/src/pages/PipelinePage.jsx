@@ -205,7 +205,7 @@ const EMPTY_COLUMN_TEXT = {
   lead: 'Leads qualificados no Radar de Prospecção aparecem aqui',
   meeting: 'Arraste para aqui ao marcar uma reunião: pedimos a data e confirmamos ao cliente pelo WhatsApp',
   negotiation: 'Ao arrastar para aqui, conte as dores do cliente, a proposta real e a isca',
-  awaiting: 'Ao arrastar para aqui, registe a proposta final apresentada',
+  awaiting: 'Ao arrastar para aqui, registre a proposta final apresentada',
   won: 'Arraste para aqui os clientes fechados: sistema, valor e prazo vão para o admin',
   lost: 'Negócios perdidos (com o motivo)',
 };
@@ -333,7 +333,7 @@ function DealForm({ deal, stage, onSaved, formId }) {
           {({ id }) => <input id={id} type="date" value={form.expected_close_date} onChange={set('expected_close_date')} className={inputClass} />}
         </Field>
         <Field label="Empresa">{({ id }) => <input id={id} value={form.company} onChange={set('company')} className={inputClass} />}</Field>
-        <Field label="Contacto">{({ id }) => <input id={id} value={form.contact_name} onChange={set('contact_name')} className={inputClass} />}</Field>
+        <Field label="Contato">{({ id }) => <input id={id} value={form.contact_name} onChange={set('contact_name')} className={inputClass} />}</Field>
         <Field label="Telefone">{({ id }) => <input id={id} type="tel" value={form.phone} onChange={set('phone')} className={inputClass} />}</Field>
         <Field label="Email" error={errors.email}>{({ id }) => <input id={id} type="email" value={form.email} onChange={set('email')} className={inputClass} />}</Field>
         {/* Seleção de utilizadores: só o admin. Os demais nem veem a lista da equipe. */}
@@ -349,7 +349,7 @@ function DealForm({ deal, stage, onSaved, formId }) {
             )}
           </Field>
         ) : (
-          !isEdit && <p className="text-xs text-neutral-500 sm:col-span-2">O negócio fica sob a sua responsabilidade.</p>
+          !isEdit && <p className="text-xs text-neutral-500 sm:col-span-2">O negócio fica sob sua responsabilidade.</p>
         )}
       </div>
     </form>
@@ -531,7 +531,7 @@ function DealDrawer({ deal, canEdit, canDelete, onClose, onMoveTo, onReschedule,
               <Button variant="danger" icon={Trash2} onClick={() => setConfirmDelete(true)} className="mr-auto">Apagar</Button>
             )}
             <Button variant="ghost" onClick={onClose}>Fechar</Button>
-            {canEdit && <Button type="submit" form="deal-edit">Guardar</Button>}
+            {canEdit && <Button type="submit" form="deal-edit">Salvar</Button>}
           </>
         )
       }
@@ -580,7 +580,7 @@ function DealDrawer({ deal, canEdit, canDelete, onClose, onMoveTo, onReschedule,
       <ConfirmDialog
         open={confirmDelete}
         title="Apagar negócio?"
-        description={`"${deal.title}" sai do pipeline e das métricas. O histórico de auditoria mantém o registo da exclusão.`}
+        description={`"${deal.title}" sai do pipeline e das métricas. O histórico de auditoria mantém o registro da exclusão.`}
         confirmLabel="Apagar negócio"
         loading={deleteMutation.isPending}
         onConfirm={() => deleteMutation.mutate()}
@@ -629,7 +629,7 @@ function QuickNoteModal({ deal, onClose }) {
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button type="submit" form="quick-note" loading={mutation.isPending}>Guardar nota</Button>
+          <Button type="submit" form="quick-note" loading={mutation.isPending}>Salvar nota</Button>
         </>
       }
     >
@@ -803,7 +803,7 @@ export default function PipelinePage() {
     <div className="space-y-5">
       <PageHeader
         title="Pipeline de negociação"
-        description="Leads qualificados no Radar entram em Triagem/Novo. Arraste os cartões entre colunas; em Cliente Fechado, o cliente é registado automaticamente."
+        description="Leads qualificados no Radar entram em Triagem/Novo. Arraste os cartões entre colunas; em Cliente Fechado, o cliente é registrado automaticamente."
         actions={<Button icon={Plus} onClick={() => setCreatingIn('lead')}>Novo negócio</Button>}
       />
 
@@ -827,7 +827,7 @@ export default function PipelinePage() {
         <label className="relative min-w-0 flex-1 sm:w-72 sm:flex-none">
           <span className="sr-only">Pesquisar negócios</span>
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-neutral-500" />
-          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Título, empresa ou contacto" className={cx(inputClass, 'pl-9')} />
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Título, empresa ou contato" className={cx(inputClass, 'pl-9')} />
         </label>
         <span className="ml-auto hidden items-center gap-1.5 text-xs text-neutral-500 md:flex">
           <TrendingUp className="size-3.5" />

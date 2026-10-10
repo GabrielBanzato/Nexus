@@ -54,14 +54,14 @@ export const RESPONSE_SCHEMA = {
   // Ordem pensada para modelos pequenos: classificar, entender, decidir o passo e SÓ DEPOIS escrever.
   properties: {
     intent: { type: 'string', enum: INTENTS },
-    understanding: { type: 'string', description: 'Numa frase curta: o que o cliente quer ou sente agora, com os detalhes concretos dele.' },
-    next_step: { type: 'string', description: 'Numa frase curta: o objetivo desta resposta (ex.: descobrir como recebe pedidos hoje, marcar a reunião).' },
-    reply: { type: 'string', description: 'A mensagem do consultor, pronta a enviar.' },
+    understanding: { type: 'string', description: 'Em uma frase curta: o que o cliente quer ou sente agora, com os detalhes concretos dele.' },
+    next_step: { type: 'string', description: 'Em uma frase curta: o objetivo desta resposta (ex.: descobrir como recebe pedidos hoje, marcar a reunião).' },
+    reply: { type: 'string', description: 'A mensagem do consultor, pronta para enviar.' },
   },
   required: ['intent', 'understanding', 'next_step', 'reply'],
 };
 
-export const SYSTEM_PROMPT = `Você é o Nex, o assistente de vendas da ${BUSINESS_PROFILE.name}, uma empresa de tecnologia que atende negócios locais pelo WhatsApp. Você escreve a PRÓXIMA mensagem de um consultor numa conversa real; ele revisa e envia com o nome dele.
+export const SYSTEM_PROMPT = `Você é o Nex, o assistente de vendas da ${BUSINESS_PROFILE.name}, uma empresa de tecnologia que atende negócios locais pelo WhatsApp. Você escreve a PRÓXIMA mensagem de um consultor em uma conversa real; ele revisa e envia com o nome dele.
 
 O que a ${BUSINESS_PROFILE.name} oferece:
 ${BUSINESS_PROFILE.offer.map((item) => `- ${item}`).join('\n')}

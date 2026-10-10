@@ -51,8 +51,8 @@ function initialForm(stage, deal) {
 }
 
 const META = {
-  negotiation: { title: 'Em negociação', icon: Flame, color: 'text-amber-400', submit: 'Guardar e mover' },
-  awaiting: { title: 'Aguardando resposta', icon: FileCheck2, color: 'text-violet-400', submit: 'Guardar e mover' },
+  negotiation: { title: 'Em negociação', icon: Flame, color: 'text-amber-400', submit: 'Salvar e mover' },
+  awaiting: { title: 'Aguardando resposta', icon: FileCheck2, color: 'text-violet-400', submit: 'Salvar e mover' },
   won: { title: 'Cliente fechado! 🎉', icon: PartyPopper, color: 'text-emerald-400', submit: 'Fechar negócio' },
   lost: { title: 'Marcar como perdido', icon: Ban, color: 'text-red-400', submit: 'Marcar como perdido' },
 };
@@ -143,7 +143,7 @@ export default function DealStageModal({ stage, deal, editing = false, canEditBi
         <>
           <Button variant="ghost" onClick={onCancel} disabled={submitting}>Cancelar</Button>
           <Button type="submit" form="deal-stage-form" variant={stage === 'lost' ? 'danger' : 'primary'} loading={submitting}>
-            {editing ? 'Guardar' : meta.submit}
+            {editing ? 'Salvar' : meta.submit}
           </Button>
         </>
       }
@@ -153,7 +153,7 @@ export default function DealStageModal({ stage, deal, editing = false, canEditBi
 
         {stage === 'negotiation' && (
           <>
-            {area('pains', { label: 'Dores do cliente', placeholder: 'O que está a doer hoje? Ex: perde pedidos no WhatsApp, não aparece no Google, depende de iFood…', autoFocus: true })}
+            {area('pains', { label: 'Dores do cliente', placeholder: 'O que está doendo hoje? Ex: perde pedidos no WhatsApp, não aparece no Google, depende de iFood…', autoFocus: true })}
             {area('proposal_offer', { label: 'Proposta real', placeholder: 'O que vamos entregar de verdade e por quanto. Ex: site + cardápio digital, R$ 3.500 + R$ 150/mês' })}
             {area('bait', { label: 'Isca', placeholder: 'O gancho para ele dizer sim. Ex: 1.º mês grátis, domínio incluído, entrega em 7 dias', rows: 2 })}
           </>
@@ -200,7 +200,7 @@ export default function DealStageModal({ stage, deal, editing = false, canEditBi
                 )}
               </div>
             )}
-            {!editing && <p className="text-xs text-neutral-500">O admin recebe o aviso no telemóvel com o sistema, o valor e o prazo.</p>}
+            {!editing && <p className="text-xs text-neutral-500">O admin recebe o aviso no celular com o sistema, o valor e o prazo.</p>}
           </>
         )}
 

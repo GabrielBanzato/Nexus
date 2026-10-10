@@ -49,7 +49,7 @@ export default function App() {
       closeSocket(); // a ligação era do utilizador anterior
       queryClient.clear();
       setToken(next);
-      setNotice(next ? null : 'A sessão foi terminada noutra aba.');
+      setNotice(next ? null : 'A sessão foi terminada em outra aba.');
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);

@@ -24,8 +24,8 @@ const MEDIA_LABELS = {
   document: '📄 Documento',
   sticker: '🖼️ Figurinha',
   location: '📍 Localização',
-  vcard: '👤 Contacto',
-  multi_vcard: '👤 Contactos',
+  vcard: '👤 Contato',
+  multi_vcard: '👤 Contatos',
   call_log: '📞 Chamada de voz/vídeo',
   revoked: '🚫 Mensagem apagada',
 };

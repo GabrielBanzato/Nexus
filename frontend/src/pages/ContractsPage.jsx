@@ -289,7 +289,7 @@ function ContractCard({ contract }) {
   const save = useMutation({
     mutationFn: (body) => saveContract(contract.user_id, body),
     onSuccess: () => {
-      toast.success('Contrato guardado', contract.name);
+      toast.success('Contrato salvo', contract.name);
       queryClient.invalidateQueries({ queryKey: ['contracts'] });
       queryClient.invalidateQueries({ queryKey: ['commissions'] });
     },
@@ -344,7 +344,7 @@ function ContractCard({ contract }) {
         </Field>
         <div className="mt-3 flex justify-end">
           <Button type="submit" size="sm" icon={Save} loading={save.isPending} disabled={!dirty && contract.configured}>
-            Guardar
+            Salvar
           </Button>
         </div>
       </form>
@@ -477,7 +477,7 @@ function GoalModal({ goal, onClose }) {
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button type="submit" form="goal-form" icon={Target} loading={mutation.isPending}>{isEdit ? 'Guardar' : 'Criar meta'}</Button>
+          <Button type="submit" form="goal-form" icon={Target} loading={mutation.isPending}>{isEdit ? 'Salvar' : 'Criar meta'}</Button>
         </>
       }
     >
@@ -612,7 +612,7 @@ function GoalsTab() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Select value={include} onChange={(e) => setInclude(e.target.value)} className="w-56" aria-label="Que metas mostrar">
-          <option value="current">A decorrer e próximas</option>
+          <option value="current">Em andamento e próximas</option>
           <option value="all">Todas (inclui antigas)</option>
         </Select>
         <Button icon={Plus} onClick={() => setEditing('new')}>Nova meta</Button>

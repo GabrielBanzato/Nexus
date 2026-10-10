@@ -131,7 +131,7 @@ function TicketModal({ ticket, onClose, canEdit, canDelete }) {
             </Button>
             {!readOnly && (
               <Button type="submit" form="ticket-form" loading={mutation.isPending}>
-                {isEdit ? 'Guardar' : 'Abrir chamado'}
+                {isEdit ? 'Salvar' : 'Abrir chamado'}
               </Button>
             )}
           </>
@@ -213,7 +213,7 @@ function TicketModal({ ticket, onClose, canEdit, canDelete }) {
       <ConfirmDialog
         open={confirmDelete}
         title={`Apagar chamado #${ticket?.id}?`}
-        description="O chamado e o seu histórico de estado serão removidos. Para manter registo, prefira o estado Fechado."
+        description="O chamado e seu histórico de estado serão removidos. Para manter registro, prefira o estado Fechado."
         confirmLabel="Apagar chamado"
         loading={deleteMutation.isPending}
         onConfirm={() => deleteMutation.mutate()}

@@ -132,7 +132,7 @@ export function describeActivity(log) {
     case 'deal.delete':
       return { title: `apagou o negócio "${d.title}"`, kind: 'delete' };
     case 'client.create':
-      return { title: d.from_deal ? 'conquistou o cliente (negócio fechado)' : `registou o cliente ${d.name ?? ''}`, kind: 'won' };
+      return { title: d.from_deal ? 'conquistou o cliente (negócio fechado)' : `registrou o cliente ${d.name ?? ''}`, kind: 'won' };
     case 'client.update':
       return { title: 'atualizou o cliente', body: Object.keys(d).map((k) => FIELD_LABELS[k] ?? k).join(', '), kind: 'edit' };
     case 'ticket.create':
@@ -175,7 +175,7 @@ const FIELD_LABELS = {
   status: 'estado',
   priority: 'prioridade',
   company: 'empresa',
-  contact_name: 'contacto',
+  contact_name: 'contato',
   phone: 'telefone',
   email: 'email',
   name: 'nome',

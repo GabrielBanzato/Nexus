@@ -25,6 +25,8 @@ from faster_whisper import WhisperModel
 
 MODEL = os.environ.get("WHISPER_MODEL", "small")
 THREADS = int(os.environ.get("WHISPER_THREADS", "2"))
+# Busca em feixe: medido (small, 31 s de fala) 5,3 s com 1 → 6,2 s com 5, e erra bem menos.
+BEAM = int(os.environ.get("WHISPER_BEAM", "5"))
 MODELS_DIR = os.environ.get("WHISPER_MODELS_DIR", "/models")
 MAX_BYTES = 8 * 1024 * 1024  # ~30 min de opus: um pedaço de 15 s tem ~60 KB
 
@@ -52,7 +54,7 @@ def transcribe(audio: bytes, language: str | None, prompt: str | None):
             language=language or None,
             initial_prompt=prompt or None,
             vad_filter=True,
-            beam_size=1,
+            beam_size=BEAM,
             condition_on_previous_text=False,
         )
         out = [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()} for s in segments]

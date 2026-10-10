@@ -89,7 +89,7 @@ export default function NexPanel({ call, localStream, peers, className, onClose 
     const onStatus = (st) => {
       if ('analyzing' in st) setAnalyzing(st.analyzing);
       if ('paused' in st) setPaused(st.paused);
-      if (st.transcription === 'error') setError('A transcrição falhou num trecho (o serviço de voz pode estar a arrancar).');
+      if (st.transcription === 'error') setError('A transcrição falhou em um trecho (o serviço de voz pode estar iniciando).');
     };
     socket.on('nex:transcript', onTranscript);
     socket.on('nex:insights', onInsights);
@@ -142,8 +142,8 @@ export default function NexPanel({ call, localStream, peers, className, onClose 
       : paused
         ? { label: 'Pausado', tone: 'bg-neutral-800 text-neutral-300' }
         : analyzing
-          ? { label: 'A analisar...', tone: 'bg-violet-950/70 text-violet-200' }
-          : { label: 'A ouvir', tone: 'bg-emerald-950/60 text-emerald-300', live: true };
+          ? { label: 'Analisando...', tone: 'bg-violet-950/70 text-violet-200' }
+          : { label: 'Ouvindo', tone: 'bg-emerald-950/60 text-emerald-300', live: true };
   const total = SECTIONS.reduce((n, s) => n + (insights[s.key]?.length ?? 0), 0);
 
   return (
@@ -232,7 +232,7 @@ export default function NexPanel({ call, localStream, peers, className, onClose 
                 className="inline-flex items-center gap-1.5 rounded-lg bg-violet-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy === 'propose' ? <LoaderCircle className="size-3.5 animate-spin" /> : <FileText className="size-3.5" />}
-                {busy === 'propose' ? 'A montar...' : 'Sugerir proposta'}
+                {busy === 'propose' ? 'Montando...' : 'Sugerir proposta'}
               </button>
               <button
                 type="button"
@@ -246,12 +246,12 @@ export default function NexPanel({ call, localStream, peers, className, onClose 
               {snapshot?.has_deal && total > 0 && (
                 <button
                   type="button"
-                  onClick={() => run('save', 'nex:save-deal', (r) => setNotice({ tone: 'ok', text: r.saved ? `${r.saved} ponto(s) guardado(s) nas dores do negócio.` : 'Tudo já estava guardado no negócio.' }))}
+                  onClick={() => run('save', 'nex:save-deal', (r) => setNotice({ tone: 'ok', text: r.saved ? `${r.saved} ponto(s) salvo(s) nas dores do negócio.` : 'Tudo já estava salvo no negócio.' }))}
                   disabled={Boolean(busy)}
                   title="Junta as dores e os receios ao campo “dores” do negócio no pipeline"
                   className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-neutral-300 ring-1 ring-neutral-700 hover:bg-neutral-800 disabled:opacity-50"
                 >
-                  {busy === 'save' ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />} Guardar no negócio
+                  {busy === 'save' ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />} Salvar no negócio
                 </button>
               )}
             </div>
@@ -267,7 +267,7 @@ export default function NexPanel({ call, localStream, peers, className, onClose 
             {showTranscript && (
               <div ref={transcriptRef} className="max-h-72 space-y-1.5 overflow-y-auto border-t border-neutral-800 px-3 py-2">
                 {segments.length === 0 ? (
-                  <p className="text-xs text-neutral-500">{paused ? 'Nex pausado.' : 'A ouvir... as falas aparecem aqui uns segundos depois.'}</p>
+                  <p className="text-xs text-neutral-500">{paused ? 'Nex pausado.' : 'Ouvindo... as falas aparecem aqui uns segundos depois.'}</p>
                 ) : (
                   segments.map((s) => (
                     <p key={s.id} className="text-xs leading-relaxed">

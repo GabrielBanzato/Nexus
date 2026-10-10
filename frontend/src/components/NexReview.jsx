@@ -145,7 +145,7 @@ export function NexReviewCard({ nex, text, onUse }) {
     return (
       <div className="mb-2 flex items-center gap-2 rounded-xl bg-violet-950/30 px-3 py-2 text-xs text-violet-200 ring-1 ring-violet-900/60" role="status">
         <LoaderCircle className="size-3.5 animate-spin" />
-        <span><strong className="font-semibold">Nex</strong> está a rever a ortografia e a preparar uma sugestão... o envio libera quando terminar.</span>
+        <span><strong className="font-semibold">Nex</strong> está revendo a ortografia e preparando uma sugestão... o envio libera quando terminar.</span>
       </div>
     );
   }
@@ -163,7 +163,7 @@ export function NexReviewCard({ nex, text, onUse }) {
       <div className="mb-2 flex items-center gap-2 rounded-xl bg-amber-950/30 px-3 py-2 text-xs text-amber-200 ring-1 ring-amber-900/60" role="status">
         <CircleAlert className="size-3.5 shrink-0" />
         <span>
-          <strong className="font-semibold">Nex</strong> {review.code === 'NEX_DISABLED' ? 'está desligado neste servidor' : 'não respondeu agora'}: pode enviar o seu texto como está.
+          <strong className="font-semibold">Nex</strong> {review.code === 'NEX_DISABLED' ? 'está desligado neste servidor' : 'não respondeu agora'}: pode enviar seu texto como está.
         </span>
       </div>
     );
@@ -176,7 +176,7 @@ export function NexReviewCard({ nex, text, onUse }) {
     <div className="mb-2 space-y-1.5 rounded-xl bg-[#17131f] p-2 ring-1 ring-violet-900/50" role="status" aria-live="polite">
       <p className="flex items-center gap-1.5 px-0.5 text-[11px] font-semibold text-violet-200">
         <Wand2 className="size-3" />
-        Nex revisou a sua mensagem
+        Nex revisou sua mensagem
       </p>
       {clean ? (
         <p className="flex items-center gap-1.5 rounded-lg bg-emerald-950/30 px-2 py-1.5 text-xs text-emerald-200 ring-1 ring-emerald-900/60">

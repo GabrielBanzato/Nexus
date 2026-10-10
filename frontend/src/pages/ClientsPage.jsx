@@ -95,7 +95,7 @@ function ClientFormModal({ client, onClose }) {
       open
       onClose={onClose}
       title={isEdit ? 'Editar cliente' : 'Novo cliente'}
-      description={isEdit ? `Atualizado ${formatRelative(client.updated_at)}` : 'Registe um cliente conquistado ou em negociação.'}
+      description={isEdit ? `Atualizado ${formatRelative(client.updated_at)}` : 'Registre um cliente conquistado ou em negociação.'}
       size={isEdit ? 'lg' : 'md'}
       footer={
         tab === 'details' && (
@@ -104,7 +104,7 @@ function ClientFormModal({ client, onClose }) {
               Cancelar
             </Button>
             <Button type="submit" form="client-form" loading={mutation.isPending}>
-              {isEdit ? 'Guardar alterações' : 'Adicionar cliente'}
+              {isEdit ? 'Salvar alterações' : 'Adicionar cliente'}
             </Button>
           </>
         )
@@ -124,7 +124,7 @@ function ClientFormModal({ client, onClose }) {
       <form id="client-form" onSubmit={submit} className="space-y-4" noValidate>
         {errors.form && <p className="rounded-xl bg-red-950/40 px-3 py-2 text-sm text-red-300">{errors.form}</p>}
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Nome do contacto" required error={errors.name}>
+          <Field label="Nome do contato" required error={errors.name}>
             {({ id, invalid }) => <input id={id} aria-invalid={invalid} value={form.name} onChange={set('name')} className={inputClass} />}
           </Field>
           <Field label="Empresa" error={errors.company}>
@@ -162,7 +162,7 @@ function ClientFormModal({ client, onClose }) {
               )}
             </Field>
           ) : (
-            !isEdit && <p className="self-end pb-2 text-xs text-neutral-500">O cliente fica sob a sua responsabilidade.</p>
+            !isEdit && <p className="self-end pb-2 text-xs text-neutral-500">O cliente fica sob sua responsabilidade.</p>
           )}
         </div>
       </form>
@@ -229,7 +229,7 @@ export default function ClientsPage() {
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <p className="text-sm text-neutral-400">
           {data ? <><strong className="font-semibold text-white tabular-nums">{data.meta.total}</strong> {data.meta.total === 1 ? 'cliente' : 'clientes'}</> : ' '}
-          <span className="ml-2 text-xs text-neutral-600">Leads e contactos em espera ficam na Central de Atendimento.</span>
+          <span className="ml-2 text-xs text-neutral-600">Leads e contatos em espera ficam na Central de Atendimento.</span>
         </p>
         <label className="relative lg:w-80">
           <span className="sr-only">Pesquisar clientes</span>
@@ -252,7 +252,7 @@ export default function ClientsPage() {
         <EmptyState
           icon={Building2}
           title={q ? 'Nenhum cliente encontrado' : 'Ainda não há clientes'}
-          description={q ? 'Ajuste a pesquisa.' : 'Aparecem aqui os negócios fechados no pipeline e os contactos marcados como Cliente na Central.'}
+          description={q ? 'Ajuste a pesquisa.' : 'Aparecem aqui os negócios fechados no pipeline e os contatos marcados como Cliente na Central.'}
           action={!q && <Button icon={Plus} onClick={() => setEditing({})}>Adicionar cliente</Button>}
         />
       ) : (
@@ -263,7 +263,7 @@ export default function ClientsPage() {
               <thead className="border-b border-neutral-800 text-xs tracking-wide text-neutral-500 uppercase">
                 <tr>
                   <th scope="col" className="px-4 py-3 font-medium">Cliente</th>
-                  <th scope="col" className="px-4 py-3 font-medium">Contacto</th>
+                  <th scope="col" className="px-4 py-3 font-medium">Contato</th>
                   <th scope="col" className="px-4 py-3 font-medium">Estado</th>
                   <th scope="col" className="px-4 py-3 font-medium">Responsável</th>
                   <th scope="col" className="px-4 py-3 font-medium">Atualizado</th>
@@ -370,7 +370,7 @@ export default function ClientsPage() {
       <ConfirmDialog
         open={Boolean(deleting)}
         title={`Remover ${deleting?.name}?`}
-        description="O cliente é apagado. Os chamados associados continuam a existir, mas ficam sem cliente. Para manter o histórico, prefira o estado Arquivado."
+        description="O cliente é apagado. Os chamados associados continuam existindo, mas ficam sem cliente. Para manter o histórico, prefira o estado Arquivado."
         confirmLabel="Remover cliente"
         loading={deleteMutation.isPending}
         onConfirm={() => deleteMutation.mutate(deleting)}

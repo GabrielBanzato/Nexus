@@ -41,7 +41,7 @@ export default function ActivityTimeline({ entity, id, primaryType }) {
       setNote('');
       queryClient.invalidateQueries({ queryKey });
     },
-    onError: (err) => toast.error('Não foi possível guardar a nota', err.message),
+    onError: (err) => toast.error('Não foi possível salvar a nota', err.message),
   });
 
   const submit = (event) => {
@@ -68,7 +68,7 @@ export default function ActivityTimeline({ entity, id, primaryType }) {
           }}
           rows={2}
           maxLength={2000}
-          placeholder="Registar uma nota: chamada, reunião, combinado com o cliente... (Ctrl+Enter)"
+          placeholder="Registrar uma nota: chamada, reunião, combinado com o cliente... (Ctrl+Enter)"
           className="min-h-16"
           aria-label="Nova nota"
         />
@@ -82,9 +82,9 @@ export default function ActivityTimeline({ entity, id, primaryType }) {
       {isError ? (
         <ErrorState error={error} onRetry={refetch} />
       ) : isLoading ? (
-        <Spinner label="A carregar histórico..." />
+        <Spinner label="Carregando histórico..." />
       ) : logs.length === 0 ? (
-        <EmptyState icon={History} title="Sem atividade registada" description="As ações da equipe sobre este registo aparecem aqui." />
+        <EmptyState icon={History} title="Sem atividade registrada" description="As ações da equipe sobre este registro aparecem aqui." />
       ) : (
         <ol className="space-y-5" aria-label="Histórico de atividade">
           {groups.map((group) => (

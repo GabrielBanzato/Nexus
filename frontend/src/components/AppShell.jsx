@@ -67,9 +67,9 @@ const GROUPS = [
 
 const LIVE = {
   live: { label: 'Ao vivo', dot: 'bg-emerald-400', ping: true },
-  connecting: { label: 'A ligar...', dot: 'bg-amber-400' },
-  polling: { label: 'Sincroniza a cada 15s', dot: 'bg-sky-400', title: 'A rede ou um antivírus está a reter o canal em tempo real; os dados são atualizados periodicamente.' },
-  offline: { label: 'Sem ligação', dot: 'bg-red-500' },
+  connecting: { label: 'Conectando...', dot: 'bg-amber-400' },
+  polling: { label: 'Sincroniza a cada 15s', dot: 'bg-sky-400', title: 'A rede ou um antivírus está retendo o canal em tempo real; os dados são atualizados periodicamente.' },
+  offline: { label: 'Sem conexão', dot: 'bg-red-500' },
 };
 
 function LiveIndicator({ status }) {
@@ -156,7 +156,7 @@ export default function AppShell() {
   if (isLoading || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#111111]">
-        <Spinner label="A preparar o seu espaço..." />
+        <Spinner label="Preparando seu espaço..." />
       </div>
     );
   }

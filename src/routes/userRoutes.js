@@ -56,7 +56,7 @@ export default async function userRoutes(app) {
 
   app.get('/api/users/:id', { schema: { params: idParam }, preHandler: requireRole('admin', 'partner') }, async (request) => {
     const user = await findUserById(request.params.id);
-    if (!user) throw notFound('Utilizador');
+    if (!user) throw notFound('Usuário');
     return { data: user };
   });
 
@@ -64,7 +64,7 @@ export default async function userRoutes(app) {
   app.patch('/api/users/:id', { schema: updateSchema, preHandler: requireRole('admin') }, async (request) => {
     const { id } = request.params;
     const before = await findUserById(id);
-    if (!before) throw notFound('Utilizador');
+    if (!before) throw notFound('Usuário');
 
     const losesAdmin =
       before.role === 'admin' &&

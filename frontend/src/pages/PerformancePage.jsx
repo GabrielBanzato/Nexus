@@ -234,7 +234,7 @@ function Leaderboard({ rows, selectedId, onSelect, canSelect, meId, teamSize }) 
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-white"><Trophy className="size-4 text-amber-400" />Leaderboard da equipe</h2>
           <p className="text-xs text-neutral-500">
-            {canSelect ? 'Clique num membro para focar as métricas nele.' : `A sua posição entre ${teamSize} membros.`}
+            {canSelect ? 'Clique em um membro para focar as métricas nele.' : `Sua posição entre ${teamSize} membros.`}
           </p>
         </div>
       </div>
@@ -347,7 +347,7 @@ function ProspectingBoard({ meId, isManager }) {
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-white"><Crosshair className="size-4 text-red-500" />Prospecção da equipe</h2>
           <p className="text-xs text-neutral-500">
-            {isManager ? `Quem mais prospectou ${periodLabel}. Atualiza sozinho a cada minuto.` : `Os seus números ${periodLabel}.`}
+            {isManager ? `Quem mais prospectou ${periodLabel}. Atualiza sozinho a cada minuto.` : `Seus números ${periodLabel}.`}
           </p>
         </div>
         <Tabs value={period} onChange={setPeriod} options={[{ value: 'today', label: 'Hoje' }, { value: 'week', label: 'Esta semana' }]} />
@@ -356,7 +356,7 @@ function ProspectingBoard({ meId, isManager }) {
       {isError ? (
         <div className="px-4 pb-4 sm:px-5"><ErrorState error={error} onRetry={refetch} /></div>
       ) : isLoading ? (
-        <div className="px-4 pb-4 sm:px-5"><Spinner label="A carregar prospecção..." /></div>
+        <div className="px-4 pb-4 sm:px-5"><Spinner label="Carregando prospecção..." /></div>
       ) : (
         <>
           {totals && (
@@ -462,7 +462,7 @@ export default function PerformancePage() {
     <div className="space-y-5">
       <PageHeader
         title="Desempenho comercial"
-        description={isManager ? 'Prospecção do dia e da semana, e resultados da equipe no período.' : 'A sua prospecção, os seus resultados no período e a sua posição na equipe.'}
+        description={isManager ? 'Prospecção do dia e da semana, e resultados da equipe no período.' : 'Sua prospecção, seus resultados no período e sua posição na equipe.'}
       />
 
       <ProspectingBoard meId={user?.id} isManager={isManager} />
@@ -487,7 +487,7 @@ export default function PerformancePage() {
             {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </Select>
         )}
-        {focusName && <Badge tone="red" dot>A ver: {focusName}</Badge>}
+        {focusName && <Badge tone="red" dot>Vendo: {focusName}</Badge>}
         {data && (
           <span className="ml-auto text-xs text-neutral-500">
             {new Date(`${data.meta.from}T12:00:00Z`).toLocaleDateString('pt-PT')} – {new Date(`${data.meta.to}T12:00:00Z`).toLocaleDateString('pt-PT')}
@@ -498,7 +498,7 @@ export default function PerformancePage() {
       {isError ? (
         <ErrorState error={error} onRetry={refetch} />
       ) : isLoading || !data ? (
-        <Spinner label="A calcular métricas..." />
+        <Spinner label="Calculando métricas..." />
       ) : (
         <div className={cx('space-y-5 transition-opacity', isFetching && 'opacity-60')}>
           <div className="grid gap-3 lg:grid-cols-[1.2fr_2fr]">

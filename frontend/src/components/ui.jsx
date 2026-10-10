@@ -442,7 +442,7 @@ export function SegmentedTabs({ options, value, onChange, label }) {
   );
 }
 
-export function Spinner({ label = 'A carregar...' }) {
+export function Spinner({ label = 'Carregando...' }) {
   return (
     <div className="flex items-center justify-center gap-2 py-16 text-sm text-neutral-500" role="status">
       <LoaderCircle className="size-5 animate-spin text-red-500" />

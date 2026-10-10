@@ -112,8 +112,11 @@ export function createWhatsAppClient({
   onState,
   onSessionReset,
   logger,
-  readyStallMs = 3 * 60_000,
-  maxStuckRestarts = 2,
+  // Paciência com a sincronização (VPS de 2 vCPU a dividir com o Whisper e o Qwen): 5 min, e a
+  // cada nova tentativa mais tempo. Só apaga a sessão depois de maxStuckRestarts tentativas
+  // (~1h a tentar): antes, 2 tentativas de 3 min apagavam sessões que só estavam lentas.
+  readyStallMs = 5 * 60_000,
+  maxStuckRestarts = 5,
 }) {
   let client = null;
   let stopped = true;
@@ -266,8 +269,9 @@ export function createWhatsAppClient({
   /**
    * Autenticou mas não ficou pronto: o WhatsApp Web às vezes fica preso no ecrã de
    * sincronização depois de um reinício (whatsapp-web.js nunca emite 'ready'). Reinicia o
-   * navegador com a mesma sessão; se voltar a prender maxStuckRestarts vezes seguidas, a sessão
-   * está estragada: apaga-a e pede o QR Code de novo (avisa via onSessionReset).
+   * navegador com a mesma sessão, com cada vez mais paciência; só se prender maxStuckRestarts
+   * vezes seguidas a sessão é dada como estragada: apaga-a e pede o QR Code de novo (avisa via
+   * onSessionReset). Se o WhatsApp a tiver mesmo invalidado, ele próprio volta a mostrar o QR.
    */
   async function onReadyStalled() {
     if (stopped || state.status === 'ready') return;
@@ -286,12 +290,15 @@ export function createWhatsAppClient({
     if (!stopped) boot();
   }
 
-  /** (Re)arma o vigia: sem progresso em readyStallMs depois de autenticar → onReadyStalled. */
+  /**
+   * (Re)arma o vigia: sem progresso depois de autenticar → onReadyStalled. A espera cresce a cada
+   * tentativa falhada (5, 10, 15 min...): uma sincronização lenta acaba por passar.
+   */
   function armReadyWatch(current) {
     clearTimeout(readyWatch);
     readyWatch = setTimeout(() => {
       if (client === current) onReadyStalled();
-    }, readyStallMs);
+    }, readyStallMs * Math.min(stuckRestarts + 1, 3));
     readyWatch.unref?.();
   }
 
@@ -407,10 +414,11 @@ export function createWhatsAppClient({
 
     /**
      * Reinício de manutenção (ex.: todo dia às 7h): fecha o Chrome e abre de novo com a mesma
-     * sessão (sem QR). Se em `readyTimeoutMs` não voltar a ficar conectado, a sessão está
-     * estragada: apaga-a e arranca de novo, já a mostrar um QR Code para ligar o número outra vez.
+     * sessão (sem QR). Se em `readyTimeoutMs` ainda não estiver conectado, NÃO apaga a sessão
+     * (antes apagava, e sessões só lentas a sincronizar pediam QR todas as manhãs): devolve 'slow'
+     * e o vigia da sincronização (onReadyStalled) continua a tentar com paciência.
      * Sem número ligado (a pedir QR) não faz nada: não há sessão a renovar.
-     * @returns {Promise<'ready'|'qr'|'reset'|'skipped'>}
+     * @returns {Promise<'ready'|'qr'|'slow'|'skipped'>}
      */
     async restart({ readyTimeoutMs = 3 * 60_000, pollMs = 2_000 } = {}) {
       if (stopped || state.status === 'qr') return 'skipped';
@@ -430,16 +438,8 @@ export function createWhatsAppClient({
       }
       if (stopped) return 'skipped';
       if (state.status === 'ready') return 'ready';
-
-      logger.warn({ status: state.status, error: state.error }, 'WhatsApp: não voltou depois do reinício; a apagar a sessão para ler o QR de novo');
-      clearTimeout(retryTimer);
-      retryTimer = null;
-      attempts = 0;
-      await destroyClient();
-      wipeSession();
-      setState({ status: 'disconnected', qr: null, phone: null, error: 'A conexão não voltou no reinício diário: leia o QR Code de novo.' });
-      boot();
-      return 'reset';
+      logger.warn({ status: state.status, error: state.error }, 'WhatsApp: ainda a sincronizar depois do reinício diário; continua a tentar');
+      return 'slow';
     },
 
     /**

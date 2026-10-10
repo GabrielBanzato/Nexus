@@ -53,6 +53,9 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     init: true # tini como PID 1: recolhe processos zumbis do Chrome
+    # Tempo para fechar com calma num redeploy (o padrão são 10 s): o Chrome do WhatsApp grava a
+    # sessão antes de sair. Morto a meio, a sessão podia estragar-se e pedir o QR Code de novo.
+    stop_grace_period: 45s
     shm_size: 1gb # memória compartilhada para o Chromium
     environment:
       PORT: 3000

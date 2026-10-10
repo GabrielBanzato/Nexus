@@ -169,7 +169,7 @@ export async function buildApp() {
       task: async () => {
         const result = await whatsapp.restart({ readyTimeoutMs: config.whatsapp.dailyRestartTimeoutMs });
         app.log.info({ result }, 'WhatsApp: reinício diário concluído');
-        if (result === 'reset' || result === 'qr') await notifyNeedsQr(result === 'reset' ? 'daily_restart_failed' : 'logged_out');
+        if (result === 'qr') await notifyNeedsQr('logged_out');
       },
     });
     app.addHook('onClose', async () => daily.stop());
@@ -290,6 +290,10 @@ async function start() {
 
   const shutdown = async (signal) => {
     app.log.info({ signal }, 'Encerrando servidor');
+    // O WhatsApp primeiro e com calma: o Chrome tem de gravar a sessão antes de fechar. Morto a
+    // meio (redeploy), o perfil podia ficar estragado e a próxima subida ficava presa a
+    // sincronizar até pedir o QR Code de novo.
+    await Promise.race([app.whatsapp?.stop().catch(() => {}), new Promise((r) => setTimeout(r, 20_000))]);
     await app.close();
     process.exit(0);
   };

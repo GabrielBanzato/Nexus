@@ -14,6 +14,7 @@ import {
   updateClient,
 } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
+import { CLIENT_STATUS_META } from '../lib/labels.js';
 import { clearPendingChat, peekPendingChat } from '../lib/chatDraft.js';
 import { confirmationPreview, greetingName, instantInvitePreview } from '../lib/meetingTexts.js';
 import { useDebouncedValue, useUserDirectory } from '../lib/hooks.js';
@@ -179,6 +180,32 @@ function patchConversation(queryClient, clientId, patch) {
 // Lista de conversas (sidebar)
 // ---------------------------------------------------------------------------
 
+const dayMonth = (ymd) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}`;
+const todayYmd = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/** Selo na lista: "Cliente", "Em espera até 12/10" ou "Retomar" (a data já chegou). Lead não leva selo. */
+function StatusChip({ conversation }) {
+  const { status, hold_until: holdUntil } = conversation;
+  if (status === 'active') {
+    return <span className="shrink-0 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300 ring-1 ring-emerald-500/30">Cliente</span>;
+  }
+  if (status === 'on_hold') {
+    const due = holdUntil && holdUntil <= todayYmd();
+    return (
+      <span className={cx('shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ring-1', due ? 'bg-red-500/10 text-red-300 ring-red-500/30' : 'bg-amber-500/10 text-amber-300 ring-amber-500/30')}>
+        {due ? 'Retomar' : holdUntil ? `Espera até ${dayMonth(holdUntil)}` : 'Em espera'}
+      </span>
+    );
+  }
+  if (status === 'archived') {
+    return <span className="shrink-0 rounded-full bg-neutral-800 px-1.5 py-0.5 text-[10px] font-semibold text-neutral-400">Arquivado</span>;
+  }
+  return null;
+}
+
 function ConversationItem({ conversation, active, unread, aiSuggesting, unassigned, onSelect }) {
   return (
     <li>
@@ -205,6 +232,7 @@ function ConversationItem({ conversation, active, unread, aiSuggesting, unassign
             ) : (
               <span className={cx('min-w-0 flex-1 truncate text-xs', unread ? 'text-neutral-200' : 'text-neutral-500')}>{lastPreview(conversation)}</span>
             )}
+            <StatusChip conversation={conversation} />
             {unassigned && (
               <span className="shrink-0 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
                 Sem responsável
@@ -356,6 +384,78 @@ function ResponsibleSelect({ conversation }) {
         <option key={u.id} value={u.id}>{u.name}</option>
       ))}
     </select>
+  );
+}
+
+const STATUS_OPTIONS = ['lead', 'active', 'on_hold', 'archived'];
+const STATUS_TOASTS = {
+  lead: 'Volta a ser um lead (sai da aba Clientes).',
+  active: 'Agora aparece na aba Clientes.',
+  on_hold: 'Fica em espera, como na Triagem.',
+  archived: 'Sai da Central no modo Foco (no "Ver tudo" continua, se houver mensagens).',
+};
+
+/**
+ * Estado do contacto (para todos os que veem a conversa): Lead, Cliente (vai para a aba
+ * Clientes), Em espera (com data de retomar opcional, como na Triagem) ou Arquivado.
+ */
+function ClientStatusSelect({ conversation }) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [holding, setHolding] = useState(false);
+  const [holdUntil, setHoldUntil] = useState('');
+  const mutation = useMutation({
+    mutationFn: (body) => updateClient(conversation.id, body),
+    onSuccess: (client) => {
+      setHolding(false);
+      patchConversation(queryClient, client.id, { status: client.status, hold_until: client.hold_until });
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      toast.success(`${client.name}: ${CLIENT_STATUS_META[client.status].label}`, STATUS_TOASTS[client.status]);
+    },
+    onError: (err) => toast.error('Não foi possível mudar o estado', err.message),
+  });
+  const status = conversation.status ?? 'lead';
+  const tone = { lead: 'border-sky-800/70 text-sky-300', active: 'border-emerald-700/70 text-emerald-300', on_hold: 'border-amber-700/70 text-amber-300', archived: 'border-neutral-700 text-neutral-400' }[status];
+
+  return (
+    <>
+      <select
+        aria-label={`Estado de ${conversation.name}`}
+        title="Lead, cliente (aparece na aba Clientes), em espera ou arquivado"
+        value={status}
+        disabled={mutation.isPending}
+        onChange={(e) => {
+          const next = e.target.value;
+          if (next === 'on_hold') {
+            setHoldUntil('');
+            setHolding(true);
+          } else mutation.mutate({ status: next });
+        }}
+        className={cx('h-9 max-w-32 shrink-0 cursor-pointer rounded-full border bg-[#141414] px-3 text-xs font-medium outline-none', tone)}
+      >
+        {STATUS_OPTIONS.map((value) => (
+          <option key={value} value={value}>{CLIENT_STATUS_META[value].label}</option>
+        ))}
+      </select>
+      <Modal
+        open={holding}
+        onClose={() => setHolding(false)}
+        size="sm"
+        title="Pôr em espera"
+        description={`${conversation.name} fica marcado como "Em espera" na Central.`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setHolding(false)}>Cancelar</Button>
+            <Button loading={mutation.isPending} onClick={() => mutation.mutate({ status: 'on_hold', hold_until: holdUntil || null })}>Pôr em espera</Button>
+          </>
+        }
+      >
+        <label className="block text-sm font-medium text-neutral-300" htmlFor="hold-until">Retomar em (opcional)</label>
+        <input id="hold-until" type="date" value={holdUntil} min={toDateInput(new Date())} onChange={(e) => setHoldUntil(e.target.value)} className={cx(inputClass, 'mt-1.5')} data-autofocus />
+        <p className="mt-1.5 text-xs text-neutral-500">Nesse dia o selo passa a "Retomar" na lista de conversas.</p>
+      </Modal>
+    </>
   );
 }
 
@@ -939,6 +1039,7 @@ function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, 
               .join(' · ')}
           </p>
         </div>
+        <ClientStatusSelect conversation={conversation} />
         {isAdmin && <ResponsibleSelect conversation={conversation} />}
         <VideoCallButton conversation={conversation} canSend={canSend} />
       </header>

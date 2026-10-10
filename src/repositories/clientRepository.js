@@ -1,8 +1,8 @@
 import { db } from '../config/database.js';
 import { internationalPhone } from '../lib/country.js';
 
-export const CLIENT_STATUSES = ['lead', 'active', 'archived'];
-export const CLIENT_FIELDS = ['name', 'company', 'phone', 'email', 'status', 'responsible_id', 'lead_id', 'bot_active'];
+export const CLIENT_STATUSES = ['lead', 'active', 'on_hold', 'archived'];
+export const CLIENT_FIELDS = ['name', 'company', 'phone', 'email', 'status', 'hold_until', 'responsible_id', 'lead_id', 'bot_active'];
 
 const escapeLike = (value) => value.replace(/[\\%_]/g, (char) => `\\${char}`);
 

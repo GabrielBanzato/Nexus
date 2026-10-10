@@ -78,13 +78,14 @@ export async function listTriage(filters) {
   const data = await query
     .clone()
     .select(COLUMNS)
-    // Fila: pendentes em ordem de chegada (FIFO); já triados/arquivados, os mais recentes primeiro.
+    // Fila: os leads mais NOVOS primeiro (os que acabaram de sair do Radar); já triados/arquivados,
+    // os mais recentes primeiro.
     .modify((qb) => {
-      if (status === 'pending') qb.orderBy('l.criado_em', 'asc');
+      if (status === 'pending') qb.orderBy('l.criado_em', 'desc');
       else if (status === 'archived') qb.orderBy('t.archived_at', 'desc');
       else qb.orderBy('t.triaged_at', 'desc');
     })
-    .orderBy('l.id')
+    .orderBy('l.id', 'desc')
     .limit(limit)
     .offset(offset);
 

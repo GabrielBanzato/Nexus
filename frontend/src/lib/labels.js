@@ -6,9 +6,11 @@ export const ROLE_META = {
   agent: { label: 'Agente', tone: 'sky', description: 'Trabalha os próprios clientes e chamados' },
 };
 
+/** Estado de um contacto. active = cliente de verdade (aparece na aba Clientes). */
 export const CLIENT_STATUS_META = {
   lead: { label: 'Lead', tone: 'sky' },
-  active: { label: 'Ativo', tone: 'emerald' },
+  active: { label: 'Cliente', tone: 'emerald' },
+  on_hold: { label: 'Em espera', tone: 'amber' },
   archived: { label: 'Arquivado', tone: 'neutral' },
 };
 

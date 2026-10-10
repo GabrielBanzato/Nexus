@@ -19,6 +19,8 @@ const clientProperties = {
   phone: { type: ['string', 'null'], maxLength: 30 },
   email: { ...email, type: ['string', 'null'] },
   status: { type: 'string', enum: CLIENT_STATUSES },
+  // Em espera: retomar a partir deste dia (opcional; como o "Espera" da Triagem).
+  hold_until: { type: ['string', 'null'], format: 'date' },
   responsible_id: nullableId,
   lead_id: nullableId,
   // false = um humano assumiu a conversa no WhatsApp e a IA não deve responder.
@@ -100,6 +102,8 @@ export default async function clientRoutes(app) {
     }
 
     const fields = pick(request.body, CLIENT_FIELDS);
+    // Saiu de "Em espera": a data de retomar deixa de fazer sentido.
+    if (fields.status && fields.status !== 'on_hold') fields.hold_until = null;
     const client = await updateClient(before.id, fields);
     await logActivity(request, {
       action: 'client.update',

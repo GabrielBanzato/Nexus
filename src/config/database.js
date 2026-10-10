@@ -129,7 +129,8 @@ const SCHEMA = [
         company         VARCHAR(190)  NULL,
         phone           VARCHAR(30)   NULL,
         email           VARCHAR(190)  NULL,
-        status          ENUM('lead', 'active', 'archived') NOT NULL DEFAULT 'lead',
+        status          ENUM('lead', 'active', 'on_hold', 'archived') NOT NULL DEFAULT 'lead' COMMENT 'active = cliente (aba Clientes); on_hold = em espera',
+        hold_until      DATE          NULL COMMENT 'Em espera: retomar a partir deste dia',
         responsible_id  INT UNSIGNED  NULL,
         lead_id         INT UNSIGNED  NULL COMMENT 'Lead de prospecção que originou o cliente',
         bot_active      TINYINT(1)    NOT NULL DEFAULT 1 COMMENT 'IA responde no WhatsApp; 0 = um humano assumiu a conversa',
@@ -605,6 +606,12 @@ const COLUMN_MIGRATIONS = [
     `,
   },
   {
+    table: 'clients',
+    column: 'hold_until',
+    name: 'clients: hold_until (em espera até)',
+    sql: "ALTER TABLE clients ADD COLUMN hold_until DATE NULL COMMENT 'Em espera: retomar a partir deste dia' AFTER status",
+  },
+  {
     table: 'messages',
     column: 'ack',
     name: 'messages: ack (enviada / entregue / lida no WhatsApp)',
@@ -664,6 +671,14 @@ const TYPE_MIGRATIONS = [
     steps: [`ALTER TABLE deals MODIFY stage ENUM('lead', 'meeting', 'negotiation', 'awaiting', 'won', 'lost') NOT NULL DEFAULT 'lead'`],
   },
 ];
+
+TYPE_MIGRATIONS.push({
+  table: 'clients',
+  column: 'status',
+  name: 'clients: estado "Em espera" (on_hold)',
+  pending: (type) => !type.includes("'on_hold'"),
+  steps: ["ALTER TABLE clients MODIFY status ENUM('lead', 'active', 'on_hold', 'archived') NOT NULL DEFAULT 'lead' COMMENT 'active = cliente (aba Clientes); on_hold = em espera'"],
+});
 
 async function columnType(table, column) {
   const row = await db('information_schema.columns')

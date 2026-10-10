@@ -60,7 +60,34 @@ import {
   inputClass,
 } from '../components/ui.jsx';
 
-const PAGE_SIZE = 25;
+// Leads por página (escolha de cada um, guardada neste navegador).
+const PAGE_SIZES = [25, 50, 100];
+const PAGE_SIZE_KEY = 'nexus:triage-page-size';
+function readPageSize() {
+  try {
+    const saved = Number(localStorage.getItem(PAGE_SIZE_KEY));
+    return PAGE_SIZES.includes(saved) ? saved : PAGE_SIZES[0];
+  } catch {
+    return PAGE_SIZES[0];
+  }
+}
+
+function PageSizeSelect({ value, onChange }) {
+  return (
+    <label className="flex items-center gap-2 text-sm text-neutral-400">
+      Por página
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="h-8 cursor-pointer rounded-lg border border-neutral-800 bg-[#141414] px-2 text-sm text-neutral-200 outline-none focus:border-red-700"
+      >
+        {PAGE_SIZES.map((n) => (
+          <option key={n} value={n}>{n}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
 const STATUS_ORDER = ['pending', 'on_hold', 'qualified', 'discarded', 'archived'];
 const VIEW_STORAGE_KEY = 'nexus:triageView';
 
@@ -709,13 +736,14 @@ export default function TriagePage({ navigate }) {
   const [assignee, setAssignee] = useState(''); // '' = todos, 'none' = sem responsável, id
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
+  const [pageSize, setPageSize] = useState(readPageSize);
   const [decision, setDecision] = useState(null); // { lead, status }
   const [distributing, setDistributing] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const q = useDebouncedValue(search.trim());
   const refocusQueue = useRef(false);
 
-  const params = { status, assigned_to: (isAdmin && assignee) || undefined, q, limit: PAGE_SIZE, offset };
+  const params = { status, assigned_to: (isAdmin && assignee) || undefined, q, limit: pageSize, offset };
   const list = useQuery({ queryKey: ['triage', 'list', params], queryFn: () => listTriage(params), placeholderData: keepPreviousData });
   const summary = useQuery({ queryKey: ['triage', 'summary'], queryFn: getTriageSummary });
 
@@ -817,6 +845,15 @@ export default function TriagePage({ navigate }) {
     setOffset(next);
     clearSelection();
   };
+  const changePageSize = (size) => {
+    setPageSize(size);
+    try {
+      localStorage.setItem(PAGE_SIZE_KEY, String(size));
+    } catch {
+      // modo privado: vale só nesta visita
+    }
+    changePage(0);
+  };
 
   const toggleSelect = (id) =>
     setSelected((prev) => {
@@ -855,7 +892,15 @@ export default function TriagePage({ navigate }) {
     onRestore: (l) => restoreMutation.mutate(l),
   });
 
-  const pagination = list.data?.meta.total > PAGE_SIZE && <Pagination meta={list.data.meta} onChange={changePage} />;
+  // Rodapé: quantos por página (sempre) e as páginas (quando há mais de uma).
+  const pagination = list.data && (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <PageSizeSelect value={pageSize} onChange={changePageSize} />
+      <div className="min-w-0 flex-1">
+        <Pagination meta={list.data.meta} onChange={changePage} />
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-5">

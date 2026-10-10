@@ -62,6 +62,7 @@ export async function listConversations({ responsibleId, q, limit = 100, include
       'c.company',
       'c.phone',
       'c.status',
+      'c.hold_until',
       'c.responsible_id',
       'u.name as responsible_name',
       'lm.content as last_message',

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Building2, Mail, Pencil, Phone, Plus, Search, Trash2, UserRound } from 'lucide-react';
 import { createClient, deleteClient, listClients, updateClient } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
@@ -19,7 +19,6 @@ import {
   Modal,
   PageHeader,
   Pagination,
-  SegmentedTabs,
   Select,
   Spinner,
   apiErrorToForm,
@@ -30,7 +29,9 @@ import {
 import ActivityTimeline from '../components/ActivityTimeline.jsx';
 
 const PAGE_SIZE = 20;
-const STATUS_TABS = [{ value: '', label: 'Todos' }, ...Object.entries(CLIENT_STATUS_META).map(([value, m]) => ({ value, label: m.label }))];
+// Só clientes de verdade (estado "Cliente"): quem só recebeu mensagem fica na Central como lead,
+// em espera ou arquivado — o estado muda-se lá, no seletor ao lado do responsável.
+const CLIENT_STATUS = 'active';
 
 // ---------------------------------------------------------------------------
 // Formulário (criar / editar)
@@ -49,7 +50,7 @@ function ClientFormModal({ client, onClose }) {
     company: client?.company ?? '',
     phone: client?.phone ?? '',
     email: client?.email ?? '',
-    status: client?.status ?? 'lead',
+    status: client?.status ?? CLIENT_STATUS,
     responsible_id: client?.responsible_id ?? user?.id ?? '',
   });
   const [errors, setErrors] = useState({});
@@ -178,27 +179,19 @@ export default function ClientsPage() {
   const { user, isAdmin, isManager } = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
   const [offset, setOffset] = useState(0);
   const [editing, setEditing] = useState(null); // {} = novo, cliente = editar
   const [deleting, setDeleting] = useState(null);
   const q = useDebouncedValue(search.trim());
 
-  const params = { status, q, limit: PAGE_SIZE, offset };
+  const params = { status: CLIENT_STATUS, q, limit: PAGE_SIZE, offset };
   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['clients', 'list', params],
     queryFn: () => listClients(params),
     placeholderData: keepPreviousData, // mantém a tabela visível ao paginar/filtrar
   });
 
-  // Contagens por estado para as abas (respeitam a pesquisa).
-  const counts = useQueries({
-    queries: STATUS_TABS.map((tab) => ({
-      queryKey: ['clients', 'count', tab.value, q],
-      queryFn: () => listClients({ status: tab.value, q, limit: 1 }).then((r) => r.meta.total),
-    })),
-  });
 
   const deleteMutation = useMutation({
     mutationFn: (client) => deleteClient(client.id),
@@ -234,12 +227,10 @@ export default function ClientsPage() {
       />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <SegmentedTabs
-          label="Filtrar por estado"
-          value={status}
-          onChange={changeFilter(setStatus)}
-          options={STATUS_TABS.map((tab, i) => ({ ...tab, count: counts[i].data }))}
-        />
+        <p className="text-sm text-neutral-400">
+          {data ? <><strong className="font-semibold text-white tabular-nums">{data.meta.total}</strong> {data.meta.total === 1 ? 'cliente' : 'clientes'}</> : ' '}
+          <span className="ml-2 text-xs text-neutral-600">Leads e contactos em espera ficam na Central de Atendimento.</span>
+        </p>
         <label className="relative lg:w-80">
           <span className="sr-only">Pesquisar clientes</span>
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-neutral-500" />
@@ -260,9 +251,9 @@ export default function ClientsPage() {
       ) : clients.length === 0 ? (
         <EmptyState
           icon={Building2}
-          title={q || status ? 'Nenhum cliente encontrado' : 'Ainda não há clientes'}
-          description={q || status ? 'Ajuste a pesquisa ou o filtro de estado.' : 'Quando um lead fechar negócio, registe-o aqui.'}
-          action={!q && !status && <Button icon={Plus} onClick={() => setEditing({})}>Adicionar cliente</Button>}
+          title={q ? 'Nenhum cliente encontrado' : 'Ainda não há clientes'}
+          description={q ? 'Ajuste a pesquisa.' : 'Aparecem aqui os negócios fechados no pipeline e os contactos marcados como Cliente na Central.'}
+          action={!q && <Button icon={Plus} onClick={() => setEditing({})}>Adicionar cliente</Button>}
         />
       ) : (
         <Card className={cx('overflow-hidden transition-opacity', isFetching && 'opacity-70')}>

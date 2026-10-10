@@ -126,7 +126,7 @@ const hasMessage = (pages, id) => pages.some((page) => page.data.some((m) => m.i
  */
 /** ✓ enviada · ✓✓ entregue · ✓✓ azul lida (como no WhatsApp). Mensagens antigas (sem ack): ✓. */
 function AckTicks({ ack }) {
-  if (ack >= 3) return <CheckCheck className="size-3.5 text-sky-400" aria-label="Lida" />;
+  if (ack >= 3) return <CheckCheck className="size-3.5 text-[#53bdeb]" aria-label="Lida" />;
   if (ack === 2) return <CheckCheck className="size-3.5" aria-label="Entregue" />;
   return <Check className="size-3" aria-label="Enviada" />;
 }

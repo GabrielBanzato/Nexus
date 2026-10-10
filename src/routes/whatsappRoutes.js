@@ -124,6 +124,9 @@ export default async function whatsappRoutes(app) {
   app.get('/api/clients/:id/messages', { schema: messagesSchema }, async (request) => {
     const client = await findAccessibleClient(request.currentUser, request.params.id);
     const { before, limit } = request.query;
+    // Abriu a conversa: em segundo plano, confere no WhatsApp o "visto" das últimas mensagens
+    // (o que mudar chega por socket). Só na página mais recente.
+    if (!before) app.ackSync?.refresh(client);
     return listMessages(client.id, { before, limit });
   });
 

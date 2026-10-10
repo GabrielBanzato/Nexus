@@ -8,9 +8,8 @@ import { logActivity } from './repositories/activityLogRepository.js';
 import { registerErrorHandlers } from './lib/errors.js';
 import { assertAuthConfig, authenticate, registerAuth } from './plugins/auth.js';
 import { registerMeetSignaling } from './plugins/meetSignaling.js';
-import { clientAudience, registerSocket, rooms } from './plugins/socket.js';
-import { updateMessageAck } from './repositories/messageRepository.js';
-import { findClientById } from './repositories/clientRepository.js';
+import { registerSocket, rooms } from './plugins/socket.js';
+import { createAckSync } from './services/messageAcks.js';
 import { ensureBootstrapAdmin } from './repositories/userRepository.js';
 import { fixForeignPhones } from './repositories/leadRepository.js';
 import { createAiAgent } from './services/aiAgent.js';
@@ -126,12 +125,7 @@ export async function buildApp() {
         // Mensagem escrita direto no telemóvel do número: grava-a no histórico do cliente.
         onOwnMessage: createOwnMessageHandler(inboxOptions),
         // Entregue/lida no WhatsApp: grava e avisa quem vê a conversa (✓✓ / ✓✓ azul na Central).
-        onAck: async (msg, ack) => {
-          const row = await updateMessageAck(msg.id?._serialized, ack);
-          if (!row) return;
-          const client = await findClientById(row.client_id);
-          if (client) io.to(clientAudience(client)).emit('message_ack', { client_id: row.client_id, message_id: row.id, ack: row.ack });
-        },
+        onAck: (msg, ack) => ackSync.onAck(msg, ack),
         // Preso a sincronizar mesmo depois de reiniciar: a sessão foi apagada e o painel pede QR.
         onSessionReset: (reason) => notifyNeedsQr(reason),
         onState: (state) => {
@@ -143,6 +137,9 @@ export async function buildApp() {
       })
     : null;
   app.decorate('whatsapp', whatsapp);
+  // "Visto" das mensagens: evento do WhatsApp + atualização ao abrir a conversa.
+  const ackSync = createAckSync({ whatsapp, io, logger: app.log.child({ module: 'acks' }) });
+  app.decorate('ackSync', ackSync);
   app.addHook('onClose', async () => whatsapp?.stop());
 
   // Todo dia (7h por padrão) reinicia a ligação ao WhatsApp Web: renova o Chrome (memória) e,

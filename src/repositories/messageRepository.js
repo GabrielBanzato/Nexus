@@ -88,14 +88,30 @@ export async function listConversations({ responsibleId, q, limit = 100, include
  */
 /**
  * Estado da mensagem no WhatsApp (✓ enviada, ✓✓ entregue, ✓✓ azul lida). Só avança: um evento
- * atrasado de "entregue" não apaga um "lida". @returns a mensagem atualizada, ou null.
+ * atrasado de "entregue" não apaga um "lida".
+ * @returns {{ found: boolean, changed: null | { id, client_id, ack } }} found = a mensagem existe no Nexus
  */
 export async function updateMessageAck(waMessageId, ack) {
-  if (!waMessageId || !(ack >= 1)) return null;
-  const row = await db('messages').where({ wa_message_id: waMessageId }).first('id', 'client_id', 'ack');
-  if (!row || (row.ack ?? 0) >= ack) return null;
+  const key = messageKey(waMessageId);
+  if (!key || !(ack >= 1)) return { found: false, changed: null };
+  const row = await db('messages')
+    .where((w) => w.where('wa_message_id', waMessageId).orWhere('wa_message_id', 'like', `%\\_${escapeLike(key)}`))
+    .orderBy('id', 'desc')
+    .first('id', 'client_id', 'ack');
+  if (!row) return { found: false, changed: null };
+  if ((row.ack ?? 0) >= ack) return { found: true, changed: null };
   await db('messages').where({ id: row.id }).update({ ack });
-  return { id: row.id, client_id: row.client_id, ack };
+  return { found: true, changed: { id: row.id, client_id: row.client_id, ack } };
+}
+
+/**
+ * Parte estável do id de uma mensagem do WhatsApp: "true_5511999999999@c.us_3EB0A1B2" e
+ * "true_158965480575081@lid_3EB0A1B2" são a MESMA mensagem (o contacto migrou para @lid e o
+ * evento de "lida" pode trazer o outro formato). O que não muda é o último pedaço.
+ */
+export function messageKey(waMessageId) {
+  const key = String(waMessageId ?? '').split('_').pop();
+  return key && key.length >= 6 ? key : null;
 }
 
 export async function listMessages(clientId, { before, limit = 50 } = {}) {

@@ -404,6 +404,17 @@ export function createWhatsAppClient({
       }
     },
 
+    /**
+     * Estado atual (ack) das últimas mensagens enviadas numa conversa, pela parte estável do id
+     * (id.id): Map "3EB0A1B2..." → 1 enviada, 2 entregue, 3 lida, 4 ouvida. Vazio se não der.
+     */
+    async recentAcks(chatId, limit = 40) {
+      if (!client || state.status !== 'ready' || !chatId) return new Map();
+      const chat = await client.getChatById(chatId);
+      const messages = await chat.fetchMessages({ limit, fromMe: true });
+      return new Map(messages.filter((m) => m.id?.id).map((m) => [m.id.id, m.ack]));
+    },
+
     /** "a digitar..." na conversa do cliente (melhor esforço: falhar aqui não importa). */
     async sendTyping(jid) {
       if (!client || state.status !== 'ready' || !jid) return;

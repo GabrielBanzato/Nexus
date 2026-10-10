@@ -27,6 +27,9 @@ export function createAckSync({ whatsapp, io, logger }) {
   const lastRefresh = new Map(); // clientId → instante
   let timer = null;
   let sweeping = false;
+  const events = []; // últimos eventos message_ack recebidos (para o diagnóstico)
+  let lastError = null;
+  let lastSweep = null;
 
   async function emit(changed) {
     const client = await findClientById(changed.client_id);
@@ -42,9 +45,12 @@ export function createAckSync({ whatsapp, io, logger }) {
     return result.found;
   }
 
-  /** Confere no WhatsApp o estado das últimas mensagens enviadas a este cliente. */
-  async function refresh(client, { force = false } = {}) {
-    if (!whatsapp || !client?.whatsapp_jid) return;
+  /**
+   * Confere no WhatsApp o estado das últimas mensagens enviadas a este cliente.
+   * Com `report`, devolve o que viu e fez (diagnóstico do admin).
+   */
+  async function refresh(client, { force = false, report = null } = {}) {
+    if (!whatsapp || !client?.whatsapp_jid) return report && Object.assign(report, { skipped: 'sem WhatsApp ou contacto sem conversa' });
     const now = Date.now();
     if (!force && now - (lastRefresh.get(client.id) ?? 0) < REFRESH_EVERY_MS) return;
     lastRefresh.set(client.id, now);
@@ -57,8 +63,15 @@ export function createAckSync({ whatsapp, io, logger }) {
         .orderBy('id', 'desc')
         .limit(30)
         .select('id', 'wa_message_id', 'content', 'created_at');
+      if (report) report.pending = pending.map((r) => ({ id: r.id, wa_message_id: r.wa_message_id, text: String(r.content).slice(0, 40), created_at: r.created_at }));
       if (!pending.length) return;
       const sent = await whatsapp.recentOwnMessages(client.whatsapp_jid);
+      if (report) {
+        report.whatsapp_sent_7d = sent.length;
+        report.whatsapp_this_contact = sent.filter((m) => m.mine).map((m) => ({ id: m.id, ack: m.ack, text: m.body.slice(0, 50), t: m.timestamp }));
+        report.remotes = [...new Set(sent.map((m) => m.remote))].slice(0, 30);
+        report.applied = [];
+      }
       if (!sent.length) return;
       const byKey = new Map(sent.map((m) => [m.key, m]));
       // Ids já ligados a mensagens deste cliente (não se reaproveitam para outra).
@@ -66,6 +79,7 @@ export function createAckSync({ whatsapp, io, logger }) {
 
       for (const row of pending.filter((r) => r.wa_message_id)) {
         const m = byKey.get(messageKey(row.wa_message_id));
+        report?.applied.push({ id: row.id, by: 'id', found: Boolean(m), ack: m?.ack ?? null });
         if (m?.ack >= 1) await apply(row.wa_message_id, m.ack);
       }
       // Sem id (ex.: dois "teste" seguidos — o segundo ficou sem id no envio): pelo texto, na ordem
@@ -75,6 +89,7 @@ export function createAckSync({ whatsapp, io, logger }) {
       const candidates = sent.filter((m) => m.mine).sort((a, b) => a.timestamp - b.timestamp);
       for (const row of orphans) {
         const match = candidates.find((m) => !known.has(m.key) && sameText(m.body, row.content));
+        report?.applied.push({ id: row.id, by: 'texto', found: Boolean(match), ack: match?.ack ?? null });
         if (!match) continue;
         known.add(match.key);
         const linked = await db('messages')
@@ -85,6 +100,8 @@ export function createAckSync({ whatsapp, io, logger }) {
         if (linked && match.ack >= 1) await apply(match.id, match.ack);
       }
     } catch (err) {
+      lastError = { at: new Date(), clientId: client.id, error: err.message };
+      if (report) report.error = err.message;
       logger.warn({ err: err.message, clientId: client.id }, 'WhatsApp: não foi possível atualizar o "visto"');
     }
   }
@@ -103,6 +120,7 @@ export function createAckSync({ whatsapp, io, logger }) {
         .orderByRaw('MAX(m.id) DESC')
         .limit(SWEEP_MAX_CLIENTS)
         .select('c.id', 'c.whatsapp_jid');
+      lastSweep = { at: new Date(), clients: clients.length };
       for (const client of clients) await refresh(client);
     } catch (err) {
       logger.warn({ err: err.message }, 'WhatsApp: varrimento do "visto" falhou');
@@ -115,11 +133,22 @@ export function createAckSync({ whatsapp, io, logger }) {
     /** Evento message_ack do WhatsApp. */
     async onAck(msg, ack) {
       const waId = msg.id?._serialized;
-      if (await apply(waId, ack)) return;
+      const event = { at: new Date(), id: waId, ack, found: false };
+      events.unshift(event);
+      events.length = Math.min(events.length, 30);
+      if ((event.found = await apply(waId, ack))) return;
       for (const wait of RETRY_DELAYS_MS) {
         await sleep(wait);
-        if (await apply(waId, ack)) return;
+        if ((event.found = await apply(waId, ack))) return;
       }
+    },
+
+    /** Diagnóstico (admin): o que o WhatsApp diz desta conversa e o que o Nexus fez com isso. */
+    async diagnose(client) {
+      const report = { client: { id: client.id, whatsapp_jid: client.whatsapp_jid }, whatsapp: whatsapp?.getState?.().status ?? 'desligado' };
+      const started = Date.now();
+      await refresh(client, { force: true, report });
+      return { ...report, ms: Date.now() - started, sweep_running: Boolean(timer), last_sweep: lastSweep, last_error: lastError, recent_events: events };
     },
 
     /** Ao abrir a conversa. Nunca lança. */

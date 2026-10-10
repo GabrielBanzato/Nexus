@@ -69,6 +69,12 @@ export function useNexReview(text) {
     },
     /** O consultor escolheu a versão do Nex: esse texto já está revisto, pode enviar logo. */
     accept: (value) => setReview((prev) => (prev ? { ...prev, text: value.trim() } : prev)),
+    /** Texto escrito pelo próprio Nex (sugestão de resposta): não precisa de nova revisão. */
+    trust: (value) => {
+      clearTimeout(timer.current);
+      controller.current?.abort();
+      setReview(value.trim() ? { text: value.trim(), status: 'trusted' } : null);
+    },
     reset: () => {
       clearTimeout(timer.current);
       controller.current?.abort();
@@ -141,6 +147,14 @@ export function NexReviewCard({ nex, text, onUse }) {
         <LoaderCircle className="size-3.5 animate-spin" />
         <span><strong className="font-semibold">Nex</strong> está a rever a ortografia e a preparar uma sugestão... o envio libera quando terminar.</span>
       </div>
+    );
+  }
+
+  if (review.status === 'trusted') {
+    return (
+      <p className="mb-2 flex items-center gap-1.5 rounded-xl bg-violet-950/30 px-3 py-2 text-xs text-violet-200 ring-1 ring-violet-900/60" role="status">
+        <Check className="size-3.5" /> Texto escrito pelo <strong className="font-semibold">Nex</strong>: já revisto, pode enviar.
+      </p>
     );
   }
 

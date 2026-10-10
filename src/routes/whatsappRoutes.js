@@ -132,6 +132,14 @@ export default async function whatsappRoutes(app) {
     return { data: { seen } };
   });
 
+  /** Diagnóstico do "visto" desta conversa (só admin): o que o WhatsApp Web diz e o que se fez. */
+  app.get('/api/clients/:id/ack-debug', { schema: { params: idParam } }, async (request, reply) => {
+    if (!isAdmin(request.currentUser)) return reply.code(403).send({ code: 'FORBIDDEN', error: 'Só o admin.' });
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    if (!app.ackSync) return { data: { error: 'WhatsApp desligado neste servidor' } };
+    return { data: await app.ackSync.diagnose(client) };
+  });
+
   app.get('/api/clients/:id/messages', { schema: messagesSchema }, async (request) => {
     const client = await findAccessibleClient(request.currentUser, request.params.id);
     const { before, limit } = request.query;

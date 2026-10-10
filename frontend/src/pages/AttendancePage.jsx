@@ -4,6 +4,7 @@ import { ArrowDown, ArrowLeft, Bot, CalendarClock, Check, CheckCheck, CircleAler
 import {
   createMeeting,
   endMeeting,
+  getAckDebug,
   getAiSuggestion,
   getClientMessages,
   markConversationSeen,
@@ -229,7 +230,7 @@ function ConversationItem({ conversation, active, unread, aiSuggesting, unassign
           </span>
           <span className="mt-0.5 flex items-center gap-2">
             {aiSuggesting ? (
-              <span className="min-w-0 flex-1 truncate text-xs text-sky-400 italic">✨ IA a preparar uma sugestão...</span>
+              <span className="min-w-0 flex-1 truncate text-xs text-sky-400 italic">✨ Nex a preparar uma sugestão...</span>
             ) : (
               <span className={cx('min-w-0 flex-1 truncate text-xs', unread ? 'text-neutral-200' : 'text-neutral-500')}>{lastPreview(conversation)}</span>
             )}
@@ -733,7 +734,7 @@ function AiSuggestionCard({ ai, onUse }) {
         className="mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold text-sky-300 ring-1 ring-sky-900/70 transition hover:bg-sky-950/50 disabled:cursor-wait disabled:opacity-80"
       >
         {busy ? <RefreshCw className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
-        {busy ? 'IA a preparar uma sugestão...' : 'Sugerir resposta com IA'}
+        {busy ? 'Nex a preparar uma sugestão...' : 'Sugerir resposta com Nex'}
       </button>
     );
   }
@@ -743,7 +744,7 @@ function AiSuggestionCard({ ai, onUse }) {
     <div className="mb-2 rounded-xl bg-sky-950/40 p-2.5 ring-1 ring-sky-900/60" role="status">
       <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-sky-300">
         <Sparkles className="size-3" />
-        Sugestão da IA{hint && <span className="font-normal text-sky-400/80">· o cliente {hint}</span>}
+        Sugestão do Nex{hint && <span className="font-normal text-sky-400/80">· o cliente {hint}</span>}
         <button type="button" onClick={onDismiss} aria-label="Descartar sugestão" className="ml-auto rounded p-0.5 text-sky-400/70 hover:text-white">
           <X className="size-3.5" />
         </button>
@@ -751,7 +752,7 @@ function AiSuggestionCard({ ai, onUse }) {
       {suggestion.reply ? (
         <p className="max-h-24 overflow-y-auto text-sm break-words whitespace-pre-wrap text-sky-50">{suggestion.reply}</p>
       ) : (
-        <p className="text-xs text-sky-200/80">A IA não teve uma resposta segura para esta mensagem. Responda você mesmo.</p>
+        <p className="text-xs text-sky-200/80">O Nex não teve uma resposta segura para esta mensagem. Responda você mesmo.</p>
       )}
       <div className="mt-2 flex gap-2">
         {suggestion.reply && (
@@ -797,6 +798,7 @@ function Composer({ disabled, onSend, signature, ai, initialText = '' }) {
 
   const applySuggestion = (reply) => {
     setText(reply);
+    nex.trust(reply); // escrita pelo Nex: não volta a passar pela revisão (se editar, aí sim)
     ai.onDismiss();
     requestAnimationFrame(() => {
       const el = ref.current;
@@ -890,7 +892,7 @@ function useAiSuggestion({ clientId, enabled, lastMessageId, suggesting }) {
       queryClient.setQueryData(['ai-suggestion', clientId], (old) => ({ ...old, data: suggestion, meta: { enabled: true, pending: false } }));
       setDismissed(null);
     },
-    onError: (err) => toast.error('Sem sugestão da IA', err.message),
+    onError: (err) => toast.error('Sem sugestão do Nex', err.message),
   });
 
   if (!enabled) return null;
@@ -930,6 +932,50 @@ function useMarkSeen(clientId, lastClientMessageId, enabled) {
       window.removeEventListener('focus', send);
     };
   }, [clientId, lastClientMessageId, enabled]);
+}
+
+/**
+ * Admin: diagnóstico do "visto" desta conversa (o que o WhatsApp Web tem e o que o Nexus fez),
+ * para copiar e mandar ao suporte quando os ✓✓ azuis não aparecem.
+ */
+function AckDebugButton({ clientId }) {
+  const [open, setOpen] = useState(false);
+  const query = useQuery({ queryKey: ['ack-debug', clientId], queryFn: () => getAckDebug(clientId), enabled: open, gcTime: 0, staleTime: 0 });
+  const json = query.data ? JSON.stringify(query.data, null, 2) : '';
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="Diagnóstico do visto (✓✓)"
+        aria-label="Diagnóstico do visto"
+        className="rounded-lg p-1.5 text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+      >
+        <CheckCheck className="size-4" />
+      </button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Diagnóstico do visto"
+        description="O que o WhatsApp diz das mensagens enviadas a este contacto. Copie e envie ao suporte."
+        size="lg"
+        footer={
+          <>
+            <Button variant="ghost" loading={query.isFetching} onClick={() => query.refetch()}>Atualizar</Button>
+            <Button disabled={!json} onClick={() => navigator.clipboard?.writeText(json)}>Copiar</Button>
+          </>
+        }
+      >
+        {query.isError ? (
+          <ErrorState error={query.error} onRetry={query.refetch} />
+        ) : query.isLoading ? (
+          <Spinner label="A perguntar ao WhatsApp..." />
+        ) : (
+          <pre className="max-h-[60vh] overflow-auto rounded-lg bg-[#0d0d0d] p-3 text-[11px] leading-4 whitespace-pre-wrap break-all text-neutral-300">{json}</pre>
+        )}
+      </Modal>
+    </>
+  );
 }
 
 function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, draft, onBack, onOpenConnect }) {
@@ -1071,6 +1117,7 @@ function ChatView({ conversation, waStatus, signature, aiEnabled, aiSuggesting, 
         </div>
         <ClientStatusSelect conversation={conversation} />
         {isAdmin && <ResponsibleSelect conversation={conversation} />}
+        {isAdmin && <AckDebugButton clientId={conversation.id} />}
         <VideoCallButton conversation={conversation} canSend={canSend} />
       </header>
       <UpcomingMeeting conversation={conversation} />

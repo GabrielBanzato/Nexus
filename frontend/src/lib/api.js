@@ -208,6 +208,7 @@ export const getAiSuggestion = (clientId) => request(`/api/clients/${clientId}/a
 export const requestAiSuggestion = (clientId) => request(`/api/clients/${clientId}/ai-suggestion`, { method: 'POST' }).then(unwrap);
 /** O vendedor está a ver a conversa: marca-a como lida no WhatsApp (o cliente vê ✓✓ azul). */
 export const markConversationSeen = (clientId) => request(`/api/clients/${clientId}/seen`, { method: 'POST' }).then(unwrap);
+export const getAckDebug = (clientId) => request(`/api/clients/${clientId}/ack-debug`).then(unwrap);
 /** Nex (IA da casa): correção e reformulação de uma mensagem antes de a enviar. */
 export const reviewWithNex = (text, { signal } = {}) => request('/api/nex/review', { ...json('POST', { text }), signal }).then(unwrap);
 // Sessão do WhatsApp (só admin)

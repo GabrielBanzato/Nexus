@@ -14,6 +14,7 @@ import { ensureBootstrapAdmin } from './repositories/userRepository.js';
 import { fixForeignPhones } from './repositories/leadRepository.js';
 import { createAiAgent } from './services/aiAgent.js';
 import { createNexReviewer } from './services/nexReviewer.js';
+import { createAnthropicClient } from './services/anthropicClient.js';
 import { createOllamaClient } from './services/ollamaClient.js';
 import { createWhatsAppClient } from './services/whatsappClient.js';
 import { publicOrigin } from './repositories/meetingRepository.js';
@@ -160,11 +161,15 @@ export async function buildApp() {
   }
 
   // IA: só com AI_ENABLED=true e com o WhatsApp ligado (sugere respostas às conversas dele).
-  const ollama = config.ai.enabled
-    ? createOllamaClient({ ...config.ai, baseUrl: config.ai.ollamaUrl, logger: app.log.child({ module: 'ai' }) })
-    : null;
+  // `ollama` = o modelo em uso (Ollama local ou Claude): mesma interface.
+  const aiLogger = app.log.child({ module: 'ai' });
+  const ollama = !config.ai.enabled
+    ? null
+    : config.ai.provider === 'anthropic'
+      ? createAnthropicClient({ ...config.ai, apiKey: config.ai.anthropicApiKey, logger: aiLogger })
+      : createOllamaClient({ ...config.ai, baseUrl: config.ai.ollamaUrl, logger: aiLogger });
   if (ollama && whatsapp) {
-    aiAgent = createAiAgent({ ...config.ai, ollama, io, logger: app.log.child({ module: 'ai' }) });
+    aiAgent = createAiAgent({ ...config.ai, ollama, io, timeZone: config.business.timezone, logger: aiLogger });
     app.addHook('onClose', async () => aiAgent.stop());
   } else if (ollama) {
     app.log.warn('AI_ENABLED=true mas o WhatsApp está desligado: a IA não vai sugerir respostas.');

@@ -749,6 +749,7 @@ function AiSuggestionCard({ ai, onUse }) {
           <X className="size-3.5" />
         </button>
       </div>
+      {suggestion.understanding && <p className="mb-1 text-[11px] text-sky-300/80 italic">Entendi: {suggestion.understanding}</p>}
       {suggestion.reply ? (
         <p className="max-h-24 overflow-y-auto text-sm break-words whitespace-pre-wrap text-sky-50">{suggestion.reply}</p>
       ) : (

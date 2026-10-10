@@ -1,4 +1,6 @@
-import { DENIES_SERVICE, RESPONSE_SCHEMA, buildMessages, correctionMessages } from '../ai/prompt.js';
+import { DENIAL_CORRECTION, DENIES_SERVICE, REPEAT_CORRECTION, RESPONSE_SCHEMA, buildMessages, correctionMessages, describeContext, repeatsPrevious } from '../ai/prompt.js';
+import { db } from '../config/database.js';
+import { detectCountry } from '../lib/country.js';
 import { clientAudience } from '../plugins/socket.js';
 import { findClientById } from '../repositories/clientRepository.js';
 import { listMessages } from '../repositories/messageRepository.js';
@@ -27,7 +29,7 @@ const MAX_STORED = 300;
  * Eventos Socket.io (para quem vê o cliente): ai:suggesting { client_id, on },
  * ai:suggestion { client_id, suggestion }.
  */
-export function createAiAgent({ ollama, io, logger, debounceMs, historyLimit }) {
+export function createAiAgent({ ollama, io, logger, debounceMs, historyLimit, timeZone }) {
   const timers = new Map(); // clientId → timeout do debounce
   const suggestions = new Map(); // clientId → última sugestão
   const pending = new Map(); // clientId → Promise da geração em curso (não gera duas vezes)
@@ -43,21 +45,40 @@ export function createAiAgent({ ollama, io, logger, debounceMs, historyLimit }) 
   const emitTo = (client, event, payload) => io.to(clientAudience(client)).emit(event, payload);
 
   /**
-   * Gera com a guarda de saída. Se negar um serviço que oferecemos (erro conhecido do modelo
-   * pequeno), a 2.ª tentativa leva a resposta errada + a correção (autocorreção). Medido no caso
-   * difícil: baixar a temperatura recuperava 0/4; a autocorreção recuperou 11/11. Se ainda assim
-   * negar, a sugestão vem vazia (`blocked`): a frase errada nem chega a ser mostrada.
+   * Gera com as guardas de saída. Se negar um serviço que oferecemos (erro conhecido do modelo
+   * pequeno) ou repetir uma mensagem já enviada, a 2.ª tentativa leva a resposta errada + a
+   * correção (autocorreção: no caso da negação, baixar a temperatura recuperava 0/4 e a
+   * autocorreção 11/11). Se ainda negar, a sugestão vem vazia (`blocked`); se só repetir, fica a
+   * 2.ª (o consultor edita).
    */
-  async function generate(messages) {
-    const first = await ollama.chat({ messages, format: RESPONSE_SCHEMA });
-    const firstReply = String(first.data.reply ?? '').trim();
-    if (!DENIES_SERVICE.test(firstReply)) return { intent: first.data.intent, reply: firstReply, stats: first.stats, blocked: false };
+  async function generate(messages, history) {
+    const problemOf = (reply) => (DENIES_SERVICE.test(reply) ? DENIAL_CORRECTION : repeatsPrevious(reply, history) ? REPEAT_CORRECTION : null);
+    const pick = (r) => ({ ...r.data, reply: String(r.data.reply ?? '').trim(), stats: r.stats });
 
-    logger.warn({ reply: firstReply }, 'IA: sugestão negava um serviço oferecido; a autocorrigir');
-    const second = await ollama.chat({ messages: [...messages, ...correctionMessages(firstReply)], format: RESPONSE_SCHEMA });
-    const secondReply = String(second.data.reply ?? '').trim();
-    if (!DENIES_SERVICE.test(secondReply)) return { intent: first.data.intent, reply: secondReply, stats: second.stats, blocked: false };
-    return { intent: first.data.intent, reply: '', stats: second.stats, blocked: true };
+    const first = pick(await ollama.chat({ messages, format: RESPONSE_SCHEMA, temperature: 0.5, maxTokens: 360 }));
+    const problem = problemOf(first.reply);
+    if (!problem) return { ...first, blocked: false };
+
+    logger.warn({ reply: first.reply, problem }, 'IA: sugestão com problema; a autocorrigir');
+    const second = pick(await ollama.chat({ messages: [...messages, ...correctionMessages(first.reply, problem)], format: RESPONSE_SCHEMA, temperature: 0.6, maxTokens: 360 }));
+    if (DENIES_SERVICE.test(second.reply)) return { ...second, intent: first.intent, reply: '', blocked: true };
+    return { ...second, intent: first.intent, blocked: false };
+  }
+
+  /** O que se sabe do cliente: lead de origem, negociação mais recente, consultor, país. */
+  async function contextFor(client) {
+    const [lead, deal] = await Promise.all([
+      client.lead_id ? db('leads').where({ id: client.lead_id }).first('nicho', 'endereco', 'website', 'nota', 'avaliacoes_qtd') : null,
+      db('deals')
+        .where((w) => {
+          w.where({ client_id: client.id });
+          if (client.lead_id) w.orWhere({ lead_id: client.lead_id });
+        })
+        .orderBy('updated_at', 'desc')
+        .first('stage', 'meeting_at', 'pains', 'proposal_offer', 'bait', 'final_proposal', 'lost_reason'),
+    ]);
+    const country = detectCountry({ address: lead?.endereco, phone: client.phone });
+    return describeContext({ client, lead, deal, consultant: client.responsible_name, country, timeZone });
   }
 
   function store(clientId, suggestion) {
@@ -76,11 +97,16 @@ export function createAiAgent({ ollama, io, logger, debounceMs, historyLimit }) 
 
     emitTo(client, 'ai:suggesting', { client_id: clientId, on: true });
     try {
-      const { intent, reply, stats, blocked } = await generate(buildMessages({ clientName: client.name, history }));
+      const context = await contextFor(client).catch((err) => {
+        logger.warn({ err: err.message, clientId }, 'IA: ficha do cliente indisponível; segue só com a conversa');
+        return '';
+      });
+      const { intent, understanding, reply, stats, blocked } = await generate(buildMessages({ context, history }), history);
       const suggestion = {
         client_id: clientId,
         for_message_id: last.id,
         intent: intent ?? null,
+        understanding: String(understanding ?? '').trim().slice(0, 300) || null,
         reply: reply.slice(0, 4096),
         blocked,
         created_at: new Date().toISOString(),

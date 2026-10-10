@@ -87,7 +87,11 @@ services:
       # IA (Nex + sugestões de resposta). Só esta variável liga/desliga: o serviço "ollama" sobe sempre.
       AI_ENABLED: ${AI_ENABLED:-false}
       OLLAMA_URL: http://ollama:11434
-      AI_MODEL: ${AI_MODEL:-qwen3.5:2b-q4_K_M}
+      # Vazio = o padrão do provedor (qwen3.5:2b-q4_K_M no Ollama; claude-haiku-5-5 no Claude).
+      AI_MODEL: ${AI_MODEL:-}
+      # Claude (opcional, pago por uso): com a chave, o Nex passa a usar o Claude em vez do Qwen local.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
       AI_NUM_THREAD: ${AI_NUM_THREAD:-2}
       # Videochamadas: link enviado ao cliente + relé TURN (serviço "coturn", perfil "meet").
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}

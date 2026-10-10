@@ -10,6 +10,14 @@ const toInt = (value, fallback) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+/** Modelo da IA: o de AI_MODEL se servir ao provedor escolhido; senão o padrão dele. */
+function aiModel() {
+  const provider = process.env.AI_PROVIDER || (process.env.ANTHROPIC_API_KEY ? 'anthropic' : 'ollama');
+  const wanted = process.env.AI_MODEL || '';
+  if (provider === 'anthropic') return wanted.startsWith('claude') ? wanted : 'claude-haiku-5-5';
+  return wanted && !wanted.startsWith('claude') ? wanted : 'qwen3.5:2b-q4_K_M';
+}
+
 export const config = Object.freeze({
   server: {
     port: toInt(process.env.PORT, 3000),
@@ -67,15 +75,21 @@ export const config = Object.freeze({
   ai: {
     // Assistente que SUGERE respostas na Central (nunca envia sozinho). Requer o Ollama.
     enabled: process.env.AI_ENABLED === 'true',
+    // Provedor: "ollama" (local, CPU, grátis) ou "anthropic" (Claude: bem mais esperto e rápido,
+    // pago por uso; o texto das conversas sai para a Anthropic). Com ANTHROPIC_API_KEY e sem
+    // AI_PROVIDER, usa o Claude.
+    provider: process.env.AI_PROVIDER || (process.env.ANTHROPIC_API_KEY ? 'anthropic' : 'ollama'),
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
     ollamaUrl: (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, ''),
     // Escolhido por benchmark (CPU, 2 threads): único candidato com 8/8 nas regras de atendimento.
     // Mais rápido e um pouco pior: qwen3:1.7b. Nunca a tag "qwen3.5:2b" (= q8_0, 2,7 GB).
-    model: process.env.AI_MODEL || 'qwen3.5:2b-q4_K_M',
+    // AI_MODEL de um provedor ignorado no outro (ex.: ficou o qwen e pôs-se a chave do Claude).
+    model: aiModel(),
     // Threads de CPU para gerar (0 = o Ollama decide). No VPS de 2 vCPU: 2.
     numThread: toInt(process.env.AI_NUM_THREAD, 0),
     // Espera o cliente parar de escrever (várias mensagens curtas seguidas) antes de sugerir.
     debounceMs: toInt(process.env.AI_DEBOUNCE_MS, 6_000),
-    historyLimit: toInt(process.env.AI_HISTORY_LIMIT, 10),
+    historyLimit: toInt(process.env.AI_HISTORY_LIMIT, 20),
     timeoutMs: toInt(process.env.AI_TIMEOUT_MS, 90_000),
   },
   whatsapp: {

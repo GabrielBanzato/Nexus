@@ -9,8 +9,8 @@
  *    escreve (esse "raciocínio" curto em campos melhora muito o modelo pequeno).
  *  - System prompt FIXO (nada por cliente lá dentro): o llama.cpp reaproveita a cache do
  *    prefixo entre pedidos e, na CPU, só processa o pedido novo.
- *  - Guardas de saída: negar um serviço que fazemos, ou repetir uma mensagem já enviada →
- *    2.ª tentativa com a correção.
+ *  - Guardas de saída: negar um serviço que fazemos, repetir uma mensagem já enviada, ou não
+ *    falar da nossa IA (o diferencial: vai em todo projeto) → 2.ª tentativa com a correção.
  *
  * Para mudar o que a empresa oferece ou o tom, edite BUSINESS_PROFILE.
  */
@@ -24,10 +24,26 @@ export const BUSINESS_PROFILE = {
     'Criamos cardápios digitais: o restaurante recebe pedidos direto no WhatsApp, sem comissão de aplicativo.',
     'Criamos lojas virtuais (e-commerce) para o cliente vender os produtos dele pela internet, 24 horas por dia.',
     'Implantamos sistemas de gestão (ERP) com PDV: estoque, caixa, vendas, financeiro e notas fiscais integrados.',
+    'Criamos sistemas para empresas de serviço (clínicas, consultórios, escritórios, salões...): agenda, orçamentos e financeiro juntos.',
   ],
+  // O diferencial: TODO projeto vem com a IA própria da Nexus. Benefícios em linguagem de cliente.
+  ai: {
+    pitch: 'Todo projeto da Nexus já vem com a nossa própria IA integrada (feita por nós, ajustada ao negócio do cliente, não uma ferramenta genérica de terceiros).',
+    benefits: [
+      'atende os clientes no WhatsApp a qualquer hora, inclusive fora do expediente e nos fins de semana',
+      'responde dúvidas, faz orçamentos e marca horários sozinha, e passa para a equipe só o que precisa de uma pessoa',
+      'reduz custos com equipe (menos gente presa a responder as mesmas perguntas)',
+      'clientes mais satisfeitos, porque recebem resposta na hora',
+      'deixa a empresa com cara de moderna, à frente da concorrência',
+    ],
+  },
   // Como os clientes costumam pedir cada serviço (o modelo reconhece o pedido e confirma).
-  synonyms: 'site / página na internet; cardápio digital / pedidos online; loja virtual / e-commerce / vender pela internet / loja online; sistema / ERP / controle de estoque / caixa / PDV',
+  synonyms: 'site / página na internet; cardápio digital / pedidos online; loja virtual / e-commerce / vender pela internet / loja online; sistema / ERP / controle de estoque / caixa / PDV; agenda / agendamento / orçamentos; IA / inteligência artificial / chatbot / atendimento automático',
 };
+
+/** Bloco do prompt sobre a IA própria (partilhado pelas sugestões e pelas reuniões). */
+export const AI_DIFFERENTIATOR = `O grande diferencial da ${BUSINESS_PROFILE.name}: ${BUSINESS_PROFILE.ai.pitch} Benefícios da IA para o cliente:
+${BUSINESS_PROFILE.ai.benefits.map((b) => `- ${b}`).join('\n')}`;
 
 export const INTENTS = [
   'saudacao', // oi, bom dia, tudo bem
@@ -68,6 +84,13 @@ ${BUSINESS_PROFILE.offer.map((item) => `- ${item}`).join('\n')}
 
 A ${BUSINESS_PROFILE.name} FAZ todos os serviços acima. Quando o cliente pedir qualquer um deles (${BUSINESS_PROFILE.synonyms}), confirme que fazemos. Nunca diga que não fazemos um serviço desta lista.
 
+${AI_DIFFERENTIATOR}
+
+Sempre destaque a nossa IA:
+- Sempre que falar do que a ${BUSINESS_PROFILE.name} faz (serviços, como funciona, proposta, preço, por que nos escolher), diga que o projeto já vem com a nossa própria IA e ligue UM benefício dela à dor ou ao ramo do cliente (ex.: clínica → marca consultas sozinha à noite; restaurante → atende os pedidos no pico).
+- Se a IA ainda não apareceu na conversa, apresente-a na sua resposta. Se já apareceu, mostre outro benefício, sem repetir a mesma frase.
+- Sem exageros nem números inventados: fale dos benefícios acima.
+
 Como um bom vendedor conversa:
 - Leia a conversa inteira e responda ao que o cliente disse AGORA, com os detalhes dele (o negócio, a cidade, o que perguntou). Se ele fez uma pergunta, responda-a primeiro.
 - Nada de frases genéricas ("Se tiver alguma dúvida, estou à disposição", "Como posso ajudar?"). Cada mensagem tem de fazer a conversa andar.
@@ -102,7 +125,27 @@ export function correctionMessages(wrongReply, problem) {
 }
 
 export const DENIAL_CORRECTION = `A ${BUSINESS_PROFILE.name} cria, ela mesma, lojas virtuais (e-commerce), sites, cardápios digitais e sistemas de gestão. Confirme que fazemos o que o cliente pediu.`;
-export const REPEAT_CORRECTION = 'Ela repete uma mensagem que o consultor já enviou. Responda ao que o cliente disse por último e faça a conversa andar, com outras palavras e outra pergunta.';
+export const MISSING_AI_CORRECTION = `Ela não fala da nossa IA. Mantenha a resposta ao cliente e inclua, em uma frase natural, que o projeto já vem com a IA própria da ${BUSINESS_PROFILE.name} e UM benefício dela ligado ao negócio dele (ex.: atende os clientes no WhatsApp a qualquer hora, faz orçamentos e marca horários sozinha, reduz custos com equipe).`;
+
+// Menciona IA? "IA"/"AI" só em maiúsculas (em português "ia" também é verbo); o resto sem caixa.
+const MENTIONS_AI = /\b(IA|AI|I\.A\.)\b|intelig[eê]ncia artificial|artificial intelligence|inteligencia artificial/;
+const MENTIONS_AI_CI = /intelig[eê]ncia artificial|artificial intelligence|inteligencia artificial/i;
+const mentionsAi = (text) => MENTIONS_AI.test(String(text ?? '')) || MENTIONS_AI_CI.test(String(text ?? ''));
+// Respostas em que vender a IA soa mal: o cliente não quer, ou tem um problema a resolver.
+const NO_PITCH_INTENTS = new Set(['sem_interesse', 'suporte', 'reclamacao', 'fora_de_contexto']);
+const RECENT_FOR_AI = 4; // mensagens do consultor: se a IA já apareceu nelas, não se insiste
+
+/**
+ * A resposta devia falar da nossa IA e não fala? (só quando a IA não apareceu nas últimas
+ * mensagens do consultor, para não virar disco riscado)
+ */
+export function missingAiPitch(reply, intent, history) {
+  if (NO_PITCH_INTENTS.has(intent) || mentionsAi(reply)) return false;
+  const recent = history.filter((m) => m.sender_type !== 'client').slice(-RECENT_FOR_AI);
+  return !recent.some((m) => mentionsAi(m.content));
+}
+
+export const REPEAT_CORRECTION ='Ela repete uma mensagem que o consultor já enviou. Responda ao que o cliente disse por último e faça a conversa andar, com outras palavras e outra pergunta.';
 
 const STAGE_LABELS = {
   lead: 'primeiro contato',

@@ -9,7 +9,7 @@
  *    não do modelo — medido: o 2B inventava perguntas que ninguém fez.
  *  - Proposta (a pedido): com os pontos juntados, um rascunho de proposta e argumentos.
  */
-import { BUSINESS_PROFILE } from './prompt.js';
+import { AI_DIFFERENTIATOR, BUSINESS_PROFILE } from './prompt.js';
 
 export const INSIGHT_KEYS = ['pains', 'questions', 'objections', 'signals'];
 export const MAX_PER_KEY = 8;
@@ -28,7 +28,8 @@ export const INSIGHTS_SCHEMA = {
 
 const LANG = { pt: 'português do Brasil', en: 'inglês', es: 'espanhol' };
 
-const offer = BUSINESS_PROFILE.offer.map((o) => `- ${o}`).join('\n');
+// O que vendemos + o diferencial (a IA própria em todo projeto), igual nas sugestões do WhatsApp.
+const offer = `${BUSINESS_PROFILE.offer.map((o) => `- ${o}`).join('\n')}\n\n${AI_DIFFERENTIATOR}`;
 
 export const INSIGHTS_SYSTEM = `Você é o Nex, assistente de vendas da ${BUSINESS_PROFILE.name}. Você acompanha uma reunião de vendas pela transcrição automática (pode ter erros de reconhecimento) e anota o que importa para o vendedor fechar o negócio.
 
@@ -43,7 +44,7 @@ Regras:
 - Devolva apenas pontos NOVOS: o que já está em "Já anotado" não volta a aparecer, nem com outras palavras.
 - Nada inventado: se o trecho não traz nada novo em uma categoria, devolva a lista vazia.
 - Frases curtas, em português do Brasil, como anotações para bater o olho durante a conversa.
-- "tip": a melhor próxima fala ou pergunta do vendedor agora, para responder a uma dúvida, tratar uma objeção ou avançar para o fechamento. Sem números nem preços inventados.`;
+- "tip": a melhor próxima fala ou pergunta do vendedor agora, para responder a uma dúvida, tratar uma objeção ou avançar para o fechamento. Sempre que encaixar, use um benefício da nossa IA ligado a uma dor que o cliente disse (ex.: "perde cliente fora do horário" → a IA atende a qualquer hora). Sem números nem preços inventados.`;
 
 const list = (title, values) => (values?.length ? `${title}:\n${values.map((v) => `- ${v}`).join('\n')}` : `${title}: (nada)`);
 
@@ -85,6 +86,7 @@ ${offer}
 Regras:
 - A proposta resolve as dores que o cliente disse e responde às objeções dele, com os detalhes concretos.
 - Proponha só o(s) serviço(s) da lista acima que resolvem as dores dele (normalmente 1 ou 2), não a lista toda.
+- A proposta SEMPRE destaca que o projeto já vem com a nossa própria IA, com os benefícios dela ligados às dores do cliente; pelo menos um argumento é sobre a IA.
 - Nunca invente preços, valores, estimativas, descontos ou prazos que não foram ditos. Não faça contas.
 - Argumentos são afirmações curtas (não perguntas), cada um ligado a uma dor ou objeção.
 - Escreva em ${LANG[lang] ?? LANG.pt} (o idioma do cliente), em tom de conversa, pronto para o vendedor falar ou enviar.`,

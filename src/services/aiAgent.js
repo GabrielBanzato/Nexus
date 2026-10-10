@@ -1,4 +1,14 @@
-import { DENIAL_CORRECTION, DENIES_SERVICE, REPEAT_CORRECTION, RESPONSE_SCHEMA, buildMessages, correctionMessages, repeatsPrevious } from '../ai/prompt.js';
+import {
+  DENIAL_CORRECTION,
+  DENIES_SERVICE,
+  MISSING_AI_CORRECTION,
+  REPEAT_CORRECTION,
+  RESPONSE_SCHEMA,
+  buildMessages,
+  correctionMessages,
+  missingAiPitch,
+  repeatsPrevious,
+} from '../ai/prompt.js';
 import { clientAudience } from '../plugins/socket.js';
 import { findClientById } from '../repositories/clientRepository.js';
 import { listMessages } from '../repositories/messageRepository.js';
@@ -45,17 +55,25 @@ export function createAiAgent({ ollama, io, logger, debounceMs, historyLimit, ti
 
   /**
    * Gera com as guardas de saída. Se negar um serviço que oferecemos (erro conhecido do modelo
-   * pequeno) ou repetir uma mensagem já enviada, a 2.ª tentativa leva a resposta errada + a
-   * correção (autocorreção: no caso da negação, baixar a temperatura recuperava 0/4 e a
-   * autocorreção 11/11). Se ainda negar, a sugestão vem vazia (`blocked`); se só repetir, fica a
-   * 2.ª (o consultor edita).
+   * pequeno), repetir uma mensagem já enviada ou não falar da nossa IA, a 2.ª tentativa leva a
+   * resposta errada + a correção (autocorreção: no caso da negação, baixar a temperatura
+   * recuperava 0/4 e a autocorreção 11/11). Se ainda negar, a sugestão vem vazia (`blocked`);
+   * nos outros casos fica a 2.ª (o consultor edita).
    */
   async function generate(messages, history) {
-    const problemOf = (reply) => (DENIES_SERVICE.test(reply) ? DENIAL_CORRECTION : repeatsPrevious(reply, history) ? REPEAT_CORRECTION : null);
+    // Por ordem de gravidade: negar um serviço, repetir uma mensagem, não falar da nossa IA.
+    const problemOf = ({ reply, intent }) =>
+      DENIES_SERVICE.test(reply)
+        ? DENIAL_CORRECTION
+        : repeatsPrevious(reply, history)
+          ? REPEAT_CORRECTION
+          : missingAiPitch(reply, intent, history)
+            ? MISSING_AI_CORRECTION
+            : null;
     const pick = (r) => ({ ...r.data, reply: String(r.data.reply ?? '').trim(), stats: r.stats });
 
     const first = pick(await ollama.chat({ messages, format: RESPONSE_SCHEMA, temperature: 0.5, maxTokens: 360 }));
-    const problem = problemOf(first.reply);
+    const problem = problemOf(first);
     if (!problem) return { ...first, blocked: false };
 
     logger.warn({ reply: first.reply, problem }, 'IA: sugestão com problema; a autocorrigir');

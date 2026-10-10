@@ -91,6 +91,17 @@ function resolveSessionDir(dir) {
  * @param {(state: object) => void} [options.onState] Chamado a cada mudança de estado.
  * @param {{ info: Function, warn: Function, error: Function }} options.logger
  */
+/** Promessa com tempo limite: uma chamada ao WhatsApp Web nunca fica pendurada para sempre. */
+function withTimeout(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`tempo esgotado (${ms} ms)`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 export function createWhatsAppClient({
   sessionDir,
   headless = true,
@@ -137,28 +148,62 @@ export function createWhatsAppClient({
    * se existir. Com a migração para @lid, o mesmo contacto pode ter as duas.
    */
   async function chatsFor(chatId) {
-    const ids = new Set([chatId]);
-    try {
-      const [found] = (await client.getContactLidAndPhone(chatId)) ?? [];
-      if (found?.lid) ids.add(found.lid);
-      if (found?.pn) ids.add(found.pn);
-    } catch {
-      // versão do WhatsApp Web sem esta função: fica só o jid conhecido
-    }
     const chats = [];
-    for (const id of ids) {
-      const chat = await client.getChatById(id).catch(() => null);
+    for (const id of await contactIds(chatId)) {
+      const chat = await withTimeout(client.getChatById(id), 8_000).catch(() => null);
       if (chat) chats.push(chat);
     }
     return chats;
   }
 
+  /** Os jids do contacto: o dado e o do outro formato (@c.us ↔ @lid), se o WhatsApp souber. */
+  async function contactIds(chatId) {
+    const ids = new Set([chatId]);
+    try {
+      const [found] = (await withTimeout(client.getContactLidAndPhone(chatId), 5_000)) ?? [];
+      if (found?.lid) ids.add(found.lid);
+      if (found?.pn) ids.add(found.pn);
+    } catch {
+      // versão do WhatsApp Web sem esta função, ou demorou: fica só o jid conhecido
+    }
+    return ids;
+  }
+
+  /**
+   * Mensagens ENVIADAS pelo número que o WhatsApp Web tem na memória (todas as conversas), desde
+   * `sinceSec`. Lê o estado diretamente, sem pedir histórico ao telemóvel: o chat.fetchMessages
+   * com limite ficava a carregar histórico até ter N mensagens enviadas — numa conversa curta,
+   * minutos ou para sempre — e o "visto" (e o id da mensagem enviada) nunca chegava.
+   * @returns {Promise<Array<{ key, id, remote, body, ack, timestamp }>>}
+   */
+  async function ownMessagesInMemory(sinceSec) {
+    return withTimeout(
+      client.pupPage.evaluate((since) => {
+        const { Msg } = window.require('WAWebCollections');
+        return Msg.getModelsArray()
+          .filter((m) => m.id?.fromMe && !m.isNotification && (m.t ?? 0) >= since)
+          .map((m) => ({
+            key: m.id.id,
+            id: m.id._serialized,
+            remote: m.id.remote?._serialized ?? String(m.id.remote ?? ''),
+            body: String(m.body ?? '').slice(0, 1000),
+            ack: m.ack ?? 0,
+            timestamp: m.t ?? 0,
+          }));
+      }, sinceSec),
+      10_000,
+    );
+  }
+
   async function findSentMessageId(chatId, text) {
     try {
-      // As duas conversas do contacto (@c.us e @lid); a mais recente com o mesmo texto.
-      const recent = [];
-      for (const chat of await chatsFor(chatId)) recent.push(...(await chat.fetchMessages({ limit: 10, fromMe: true }).catch(() => [])));
-      return recent.filter((m) => m.body === text).sort((a, b) => b.timestamp - a.timestamp)[0]?.id?._serialized ?? null;
+      // Acabou de sair: a mais recente com o mesmo texto, nos últimos 2 minutos (em memória).
+      const since = Math.floor(Date.now() / 1000) - 120;
+      const ids = await contactIds(chatId);
+      const found = (await ownMessagesInMemory(since))
+        .filter((m) => m.body === text && (ids.has(m.remote) || ids.size === 1))
+        .sort((a, b) => b.timestamp - a.timestamp)[0];
+      return found?.id ?? null;
     } catch (err) {
       logger.warn({ err: err.message, chatId }, 'WhatsApp: não foi possível obter o id da mensagem enviada');
       return null;
@@ -430,29 +475,17 @@ export function createWhatsAppClient({
      * Estado atual (ack) das últimas mensagens enviadas numa conversa, pela parte estável do id
      * (id.id): Map "3EB0A1B2..." → 1 enviada, 2 entregue, 3 lida, 4 ouvida. Vazio se não der.
      */
-    async recentAcks(chatId, limit = 40) {
-      const messages = await this.recentOwnMessages(chatId, limit);
-      return new Map(messages.map((m) => [m.key, m.ack]));
-    },
-
     /**
-     * Últimas mensagens que o número enviou a um contacto, procuradas nas DUAS conversas que o
-     * WhatsApp pode ter para ele (@c.us e @lid, por causa da migração de contactos): o Nexus
-     * pode ter o jid de uma e as mensagens estarem na outra.
-     * @returns {Promise<Array<{ key: string, id: string, body: string, ack: number, timestamp: number }>>}
+     * Mensagens enviadas (últimos 7 dias, na memória do WhatsApp Web) com o estado atual.
+     * `mine` = da conversa deste contacto (@c.us ou @lid): só essas servem para ligar mensagens
+     * sem id pelo texto; para as que têm id, vale a parte estável do id em qualquer conversa.
+     * @returns {Promise<Array<{ key, id, remote, body, ack, timestamp, mine: boolean }>>}
      */
-    async recentOwnMessages(chatId, limit = 40) {
+    async recentOwnMessages(chatId) {
       if (!client || state.status !== 'ready' || !chatId) return [];
-      const byKey = new Map();
-      for (const chat of await chatsFor(chatId)) {
-        const messages = await chat.fetchMessages({ limit, fromMe: true }).catch(() => []);
-        for (const m of messages) {
-          if (!m.id?.id) continue;
-          const prev = byKey.get(m.id.id);
-          if (!prev || (m.ack ?? 0) > prev.ack) byKey.set(m.id.id, { key: m.id.id, id: m.id._serialized, body: m.body ?? '', ack: m.ack ?? 0, timestamp: m.timestamp });
-        }
-      }
-      return [...byKey.values()];
+      const since = Math.floor(Date.now() / 1000) - 7 * 24 * 3600;
+      const [ids, messages] = await Promise.all([contactIds(chatId), ownMessagesInMemory(since)]);
+      return messages.map((m) => ({ ...m, mine: ids.has(m.remote) }));
     },
 
     /**
@@ -463,7 +496,7 @@ export function createWhatsAppClient({
       if (!client || state.status !== 'ready' || !chatId) return false;
       let ok = false;
       for (const chat of await chatsFor(chatId)) {
-        ok = (await client.sendSeen(chat.id._serialized).catch(() => false)) || ok;
+        ok = (await withTimeout(client.sendSeen(chat.id._serialized), 8_000).catch(() => false)) || ok;
       }
       return ok;
     },

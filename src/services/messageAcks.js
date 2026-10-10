@@ -72,7 +72,7 @@ export function createAckSync({ whatsapp, io, logger }) {
       // de envio (a mais antiga sem id fica com a mais antiga do WhatsApp com o mesmo texto ainda
       // não ligada). Pela ordem e não pela hora exata: não depende do fuso do relógio do MySQL.
       const orphans = pending.filter((r) => !r.wa_message_id).sort((a, b) => a.id - b.id);
-      const candidates = [...sent].sort((a, b) => a.timestamp - b.timestamp);
+      const candidates = sent.filter((m) => m.mine).sort((a, b) => a.timestamp - b.timestamp);
       for (const row of orphans) {
         const match = candidates.find((m) => !known.has(m.key) && sameText(m.body, row.content));
         if (!match) continue;

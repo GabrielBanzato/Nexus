@@ -3,6 +3,7 @@ import { publish } from '../lib/events.js';
 import { clientAudience } from '../plugins/socket.js';
 import { findOrCreateWhatsAppClient } from '../repositories/clientRepository.js';
 import { saveMessage } from '../repositories/messageRepository.js';
+import { serializeMessageId } from '../lib/waId.js';
 
 // Conversas individuais: @c.us (número) e @lid (identificador sem número exposto).
 // Grupos (@g.us), canais (@newsletter) e estados (status@broadcast) ficam fora do CRM.
@@ -111,7 +112,7 @@ export function createWhatsAppInbox({ io, logger, autoCreateClients, onClientMes
       clientId: client.id,
       senderType: 'client',
       content: describeContent(msg),
-      waMessageId: msg.id?._serialized ?? null,
+      waMessageId: serializeMessageId(msg.id),
       // Hora do WhatsApp, não a de chegada: mensagens recebidas após uma reconexão ficam na ordem certa.
       createdAt: msg.timestamp ? new Date(msg.timestamp * 1000) : undefined,
     });
@@ -159,7 +160,7 @@ export function createOwnMessageHandler({ io, autoCreateClients }) {
       senderType: 'agent', // humano; sender_user_id null = "pelo telemóvel da empresa"
       ack: 1,
       content: describeContent(msg),
-      waMessageId: msg.id?._serialized ?? null,
+      waMessageId: serializeMessageId(msg.id),
       createdAt: msg.timestamp ? new Date(msg.timestamp * 1000) : undefined,
     });
     if (!message) return;

@@ -2,6 +2,7 @@ import { db } from '../config/database.js';
 import { clientAudience } from '../plugins/socket.js';
 import { findClientById } from '../repositories/clientRepository.js';
 import { messageKey, updateMessageAck } from '../repositories/messageRepository.js';
+import { serializeMessageId } from '../lib/waId.js';
 
 const RETRY_DELAYS_MS = [2_000, 8_000];
 const REFRESH_EVERY_MS = 15_000; // por conversa
@@ -132,7 +133,7 @@ export function createAckSync({ whatsapp, io, logger }) {
   return {
     /** Evento message_ack do WhatsApp. */
     async onAck(msg, ack) {
-      const waId = msg.id?._serialized;
+      const waId = serializeMessageId(msg.id);
       const event = { at: new Date(), id: waId, ack, found: false };
       events.unshift(event);
       events.length = Math.min(events.length, 30);

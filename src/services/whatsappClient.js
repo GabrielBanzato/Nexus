@@ -2,6 +2,7 @@ import { lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import QRCode from 'qrcode';
 import wwebjs from 'whatsapp-web.js';
+import { serializeMessageId } from '../lib/waId.js';
 
 const { Client, LocalAuth } = wwebjs; // pacote CommonJS: importa-se o default
 
@@ -135,7 +136,7 @@ export function createWhatsAppClient({
     const now = Date.now();
     for (const [id, expires] of sentIds) if (expires < now) sentIds.delete(id);
     for (const [body, expires] of recentBodies) if (expires < now) recentBodies.delete(body);
-    return sentIds.has(msg.id?._serialized) || sendingBodies.has(msg.body) || recentBodies.has(msg.body);
+    return sentIds.has(serializeMessageId(msg.id)) || sendingBodies.has(msg.body) || recentBodies.has(msg.body);
   };
 
   /**
@@ -182,14 +183,20 @@ export function createWhatsAppClient({
         const { Msg } = window.require('WAWebCollections');
         return Msg.getModelsArray()
           .filter((m) => m.id?.fromMe && !m.isNotification && (m.t ?? 0) >= since)
-          .map((m) => ({
-            key: m.id.id,
-            id: m.id._serialized,
-            remote: m.id.remote?._serialized ?? String(m.id.remote ?? ''),
-            body: String(m.body ?? '').slice(0, 1000),
-            ack: m.ack ?? 0,
-            timestamp: m.t ?? 0,
-          }));
+          .map((m) => {
+            // id._serialized já não vem preenchido nas versões recentes: monta-se das partes.
+            const jid = (w) => (!w ? '' : typeof w === 'string' ? w : w._serialized ?? (w.user && w.server ? `${w.user}@${w.server}` : String(w)));
+            const remote = jid(m.id.remote);
+            const participant = jid(m.id.participant);
+            return {
+              key: m.id.id,
+              id: m.id._serialized ?? `true_${remote}_${m.id.id}${participant ? `_${participant}` : ''}`,
+              remote,
+              body: String(m.body ?? '').slice(0, 1000),
+              ack: m.ack ?? 0,
+              timestamp: m.t ?? 0,
+            };
+          });
       }, sinceSec),
       10_000,
     );
@@ -353,7 +360,7 @@ export function createWhatsAppClient({
     }));
     current.on('message', live((msg) => {
       Promise.resolve(onMessage(msg)).catch((err) =>
-        logger.error({ err, messageId: msg.id?._serialized }, 'WhatsApp: falha ao processar mensagem recebida'),
+        logger.error({ err, messageId: serializeMessageId(msg.id) }, 'WhatsApp: falha ao processar mensagem recebida'),
       );
     }));
     // 'message_create' dispara também para o que o número da empresa envia. Interessa só o que
@@ -361,12 +368,12 @@ export function createWhatsAppClient({
     // ✓ / ✓✓ / ✓✓ azul das mensagens que o número enviou (pelo Nexus ou pelo telemóvel).
     current.on('message_ack', live((msg, ack) => {
       if (!onAck || !msg.fromMe) return;
-      Promise.resolve(onAck(msg, ack)).catch((err) => logger.warn({ err, messageId: msg.id?._serialized }, 'WhatsApp: falha ao gravar o estado da mensagem'));
+      Promise.resolve(onAck(msg, ack)).catch((err) => logger.warn({ err, messageId: serializeMessageId(msg.id) }, 'WhatsApp: falha ao gravar o estado da mensagem'));
     }));
     current.on('message_create', live((msg) => {
       if (!msg.fromMe || !onOwnMessage || isOwnSend(msg)) return;
       Promise.resolve(onOwnMessage(msg)).catch((err) =>
-        logger.error({ err, messageId: msg.id?._serialized }, 'WhatsApp: falha ao processar mensagem enviada pelo telemóvel'),
+        logger.error({ err, messageId: serializeMessageId(msg.id) }, 'WhatsApp: falha ao processar mensagem enviada pelo telemóvel'),
       );
     }));
 
@@ -456,7 +463,7 @@ export function createWhatsAppClient({
       sendingBodies.set(text, (sendingBodies.get(text) ?? 0) + 1);
       try {
         const sent = await client.sendMessage(chatId, text);
-        let waMessageId = sent?.id?._serialized ?? null;
+        let waMessageId = serializeMessageId(sent?.id);
         if (!waMessageId) {
           waMessageId = await findSentMessageId(chatId, text);
           logger.warn({ chatId, found: Boolean(waMessageId) }, 'WhatsApp: mensagem enviada sem id devolvido (contacto @lid)');

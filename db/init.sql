@@ -333,6 +333,7 @@ CREATE TABLE IF NOT EXISTS messages (
   content         TEXT             NOT NULL,
   wa_message_id   VARCHAR(128)     NULL COMMENT 'Id no WhatsApp: evita duplicados quando a sessão reconecta',
   sender_user_id  INT UNSIGNED     NULL COMMENT 'Quem respondeu (sender_type = agent)',
+  ack             TINYINT UNSIGNED NULL COMMENT 'Estado no WhatsApp: 1 enviada, 2 entregue, 3 lida, 4 ouvida',
   created_at      DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
   PRIMARY KEY (id),

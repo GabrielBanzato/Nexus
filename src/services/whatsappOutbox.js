@@ -36,7 +36,7 @@ export async function sendToClient({ whatsapp, io, client, content, senderType, 
 
   const sent = await whatsapp.sendText({ jid: client.whatsapp_jid, number }, signed(content, signature));
 
-  const record = { clientId: client.id, senderType, content, senderUserId };
+  const record = { clientId: client.id, senderType, content, senderUserId, ack: 1 };
   // Id repetido (o id recuperado na conversa era de um envio anterior com o mesmo texto): a
   // mensagem saiu na mesma, por isso grava-se sem id em vez de se perder.
   const message = (await saveMessage({ ...record, waMessageId: sent.waMessageId })) ?? (await saveMessage({ ...record, waMessageId: null }));

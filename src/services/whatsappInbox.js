@@ -157,6 +157,7 @@ export function createOwnMessageHandler({ io, autoCreateClients }) {
     const message = await saveMessage({
       clientId: client.id,
       senderType: 'agent', // humano; sender_user_id null = "pelo telemóvel da empresa"
+      ack: 1,
       content: describeContent(msg),
       waMessageId: msg.id?._serialized ?? null,
       createdAt: msg.timestamp ? new Date(msg.timestamp * 1000) : undefined,

@@ -96,6 +96,7 @@ export function createWhatsAppClient({
   headless = true,
   onMessage,
   onOwnMessage,
+  onAck,
   onState,
   onSessionReset,
   logger,
@@ -290,6 +291,11 @@ export function createWhatsAppClient({
     }));
     // 'message_create' dispara também para o que o número da empresa envia. Interessa só o que
     // NÃO saiu do Nexus: é um humano a responder pelo telemóvel → a IA tem de se calar.
+    // ✓ / ✓✓ / ✓✓ azul das mensagens que o número enviou (pelo Nexus ou pelo telemóvel).
+    current.on('message_ack', live((msg, ack) => {
+      if (!onAck || !msg.fromMe) return;
+      Promise.resolve(onAck(msg, ack)).catch((err) => logger.warn({ err, messageId: msg.id?._serialized }, 'WhatsApp: falha ao gravar o estado da mensagem'));
+    }));
     current.on('message_create', live((msg) => {
       if (!msg.fromMe || !onOwnMessage || isOwnSend(msg)) return;
       Promise.resolve(onOwnMessage(msg)).catch((err) =>

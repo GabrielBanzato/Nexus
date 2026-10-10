@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, Bot, CalendarClock, Check, CircleAlert, Clock, Eye, MessagesSquare, QrCode, RefreshCw, Search, SendHorizontal, Sparkles, Target, Video, WifiOff, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, Bot, CalendarClock, Check, CheckCheck, CircleAlert, Clock, Eye, MessagesSquare, QrCode, RefreshCw, Search, SendHorizontal, Sparkles, Target, Video, WifiOff, X } from 'lucide-react';
 import {
   createMeeting,
   endMeeting,
@@ -123,6 +123,20 @@ const hasMessage = (pages, id) => pages.some((page) => page.data.some((m) => m.i
  * Mensagem nova (socket ou resposta do envio). Se for a confirmação de uma mensagem nossa
  * ainda "a enviar", substitui a provisória em vez de duplicar.
  */
+/** ✓ enviada · ✓✓ entregue · ✓✓ azul lida (como no WhatsApp). Mensagens antigas (sem ack): ✓. */
+function AckTicks({ ack }) {
+  if (ack >= 3) return <CheckCheck className="size-3.5 text-sky-400" aria-label="Lida" />;
+  if (ack === 2) return <CheckCheck className="size-3.5" aria-label="Entregue" />;
+  return <Check className="size-3" aria-label="Enviada" />;
+}
+
+/** Estado no WhatsApp mudou (entregue/lida): atualiza a mensagem na cache, se estiver carregada. */
+function patchMessageAck(queryClient, clientId, messageId, ack) {
+  updatePages(queryClient, clientId, (pages) =>
+    pages.map((page) => ({ ...page, data: page.data.map((m) => (m.id === messageId && (m.ack ?? 0) < ack ? { ...m, ack } : m)) })),
+  );
+}
+
 function upsertMessage(queryClient, clientId, message) {
   updatePages(queryClient, clientId, (pages) => {
     if (hasMessage(pages, message.id)) return pages;
@@ -588,7 +602,7 @@ function MessageBubble({ message, mine, onRetry }) {
         <p className="mt-1 flex items-center justify-end gap-1 text-[10px] text-neutral-400 tabular-nums">
           {timeFormat.format(new Date(message.created_at))}
           {message.pending && <Clock className="size-3" aria-label="A enviar" />}
-          {outgoing && !message.pending && !message.failed && <Check className="size-3" aria-label="Enviada" />}
+          {outgoing && !message.pending && !message.failed && <AckTicks ack={message.ack} />}
         </p>
         {message.failed && (
           <button type="button" onClick={() => onRetry(message)} className="mt-1 flex items-center gap-1 text-xs font-semibold text-red-300 hover:text-red-200">
@@ -1049,6 +1063,7 @@ export default function AttendancePage() {
       setUnread((u) => ({ ...u, [client.id]: (u[client.id] ?? 0) + 1 }));
     }
   });
+  useSocketEvent('message_ack', ({ client_id: clientId, message_id: messageId, ack }) => patchMessageAck(queryClient, clientId, messageId, ack));
   useSocketEvent('whatsapp:status', ({ status }) => setLiveWaStatus(status));
   // IA a preparar uma sugestão (≈10–20s na CPU do servidor): aviso na lista e no chat.
   useSocketEvent('ai:suggesting', ({ client_id: clientId, on }) => setAiSuggesting((s) => ({ ...s, [clientId]: on })));

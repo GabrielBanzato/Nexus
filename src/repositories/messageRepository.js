@@ -8,6 +8,7 @@ const COLUMNS = [
   'm.sender_type',
   'm.content',
   'm.sender_user_id',
+  'm.ack',
   'u.name as sender_user_name',
   'm.created_at',
 ];
@@ -23,7 +24,7 @@ export function findMessageById(id) {
  * sessão reconecta) não duplica nada e devolve null — quem chama não deve reemitir o evento.
  * @returns {Promise<object|null>}
  */
-export async function saveMessage({ clientId, senderType, content, waMessageId = null, senderUserId = null, createdAt }) {
+export async function saveMessage({ clientId, senderType, content, waMessageId = null, senderUserId = null, createdAt, ack = null }) {
   const [id] = await db('messages')
     .insert({
       client_id: clientId,
@@ -31,6 +32,7 @@ export async function saveMessage({ clientId, senderType, content, waMessageId =
       content,
       wa_message_id: waMessageId,
       sender_user_id: senderUserId,
+      ack,
       ...(createdAt && { created_at: createdAt }),
     })
     .onConflict('wa_message_id')
@@ -83,6 +85,18 @@ export async function listConversations({ responsibleId, q, limit = 100, include
  * Conversa de um cliente, paginada "para trás": as `limit` mensagens anteriores a `before`
  * (ou as mais recentes), devolvidas em ordem cronológica para o chat renderizar direto.
  */
+/**
+ * Estado da mensagem no WhatsApp (✓ enviada, ✓✓ entregue, ✓✓ azul lida). Só avança: um evento
+ * atrasado de "entregue" não apaga um "lida". @returns a mensagem atualizada, ou null.
+ */
+export async function updateMessageAck(waMessageId, ack) {
+  if (!waMessageId || !(ack >= 1)) return null;
+  const row = await db('messages').where({ wa_message_id: waMessageId }).first('id', 'client_id', 'ack');
+  if (!row || (row.ack ?? 0) >= ack) return null;
+  await db('messages').where({ id: row.id }).update({ ack });
+  return { id: row.id, client_id: row.client_id, ack };
+}
+
 export async function listMessages(clientId, { before, limit = 50 } = {}) {
   const rows = await baseQuery()
     .where('m.client_id', clientId)

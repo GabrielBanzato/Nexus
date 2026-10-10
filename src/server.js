@@ -8,7 +8,9 @@ import { logActivity } from './repositories/activityLogRepository.js';
 import { registerErrorHandlers } from './lib/errors.js';
 import { assertAuthConfig, authenticate, registerAuth } from './plugins/auth.js';
 import { registerMeetSignaling } from './plugins/meetSignaling.js';
-import { registerSocket, rooms } from './plugins/socket.js';
+import { clientAudience, registerSocket, rooms } from './plugins/socket.js';
+import { updateMessageAck } from './repositories/messageRepository.js';
+import { findClientById } from './repositories/clientRepository.js';
 import { ensureBootstrapAdmin } from './repositories/userRepository.js';
 import { fixForeignPhones } from './repositories/leadRepository.js';
 import { createAiAgent } from './services/aiAgent.js';
@@ -123,6 +125,13 @@ export async function buildApp() {
         onMessage: createWhatsAppInbox({ ...inboxOptions, onClientMessage: (event) => aiAgent?.onClientMessage(event) }),
         // Mensagem escrita direto no telemóvel do número: grava-a no histórico do cliente.
         onOwnMessage: createOwnMessageHandler(inboxOptions),
+        // Entregue/lida no WhatsApp: grava e avisa quem vê a conversa (✓✓ / ✓✓ azul na Central).
+        onAck: async (msg, ack) => {
+          const row = await updateMessageAck(msg.id?._serialized, ack);
+          if (!row) return;
+          const client = await findClientById(row.client_id);
+          if (client) io.to(clientAudience(client)).emit('message_ack', { client_id: row.client_id, message_id: row.id, ack: row.ack });
+        },
         // Preso a sincronizar mesmo depois de reiniciar: a sessão foi apagada e o painel pede QR.
         onSessionReset: (reason) => notifyNeedsQr(reason),
         onState: (state) => {
@@ -234,10 +243,28 @@ export async function buildApp() {
   return app;
 }
 
+/**
+ * Um erro numa promessa sem .catch (ex.: dentro do whatsapp-web.js/Puppeteer) DERRUBAVA o
+ * processo inteiro no Node 22: o Docker religava o backend e, até o WhatsApp voltar, o painel
+ * respondia 502. Agora fica registado (com a pilha, para corrigir a origem) e o servidor segue.
+ * Exceção síncrona não apanhada continua a reiniciar o processo (estado pode ter ficado
+ * inconsistente), mas deixa o motivo no log.
+ */
+function guardProcess(log) {
+  process.on('unhandledRejection', (reason) => {
+    log.error({ err: reason instanceof Error ? reason : new Error(String(reason)) }, 'Erro não tratado numa promessa (o servidor continuou a correr)');
+  });
+  process.on('uncaughtException', (err) => {
+    log.fatal({ err }, 'Exceção não tratada: o servidor vai reiniciar');
+    setTimeout(() => process.exit(1), 200).unref();
+  });
+}
+
 async function start() {
   let app;
   try {
     app = await buildApp();
+    guardProcess(app.log);
   } catch (err) {
     console.error(`[nexus] Configuração inválida: ${err.message}`);
     process.exit(1);

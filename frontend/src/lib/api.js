@@ -3,6 +3,13 @@ import { getToken, notifySessionExpired } from './session.js';
 // Vazio = mesma origem (proxy do Vite em dev / Nginx no Docker encaminham /api ao backend).
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
+// 502/503/504: o backend a reiniciar (ou o proxy sem resposta). Tenta de novo antes de mostrar
+// erro. 502 = o pedido nem chegou ao backend, logo repetir é seguro para qualquer método; 503/504
+// só para leituras (GET), que não mudam nada.
+const RETRY_DELAYS_MS = [1500, 4000];
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const retriable = (status, method) => status === 502 || ((status === 503 || status === 504) && method === 'GET');
+
 const CONNECTION_ERROR = 'Não foi possível conectar ao backend. Verifique se o servidor está no ar.';
 
 /**
@@ -16,19 +23,24 @@ export async function request(path, { auth = true, headers, ...options } = {}) {
     throw Object.assign(new Error('Sessão expirada.'), { status: 401 });
   }
 
+  const method = (options.method ?? 'GET').toUpperCase();
   let response;
-  try {
-    response = await fetch(`${API_URL}${path}`, {
-      ...options,
-      headers: {
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...headers,
-      },
-    });
-  } catch (err) {
-    if (err.name === 'AbortError') throw err;
-    throw new Error(CONNECTION_ERROR);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      response = await fetch(`${API_URL}${path}`, {
+        ...options,
+        headers: {
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...headers,
+        },
+      });
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      throw new Error(CONNECTION_ERROR);
+    }
+    if (!retriable(response.status, method) || attempt >= RETRY_DELAYS_MS.length || options.signal?.aborted) break;
+    await sleep(RETRY_DELAYS_MS[attempt]);
   }
 
   const body = await response.json().catch(() => ({}));

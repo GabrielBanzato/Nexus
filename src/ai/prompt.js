@@ -14,7 +14,7 @@
  */
 
 export const BUSINESS_PROFILE = {
-  name: 'Encoding',
+  name: 'Nexus',
   // Verbos explícitos ("Criamos...", "o cliente vende"): com frases ambíguas ("lojas virtuais
   // para vender 24h") o modelo pequeno entendia que a EMPRESA vende produtos e negava o serviço.
   offer: [

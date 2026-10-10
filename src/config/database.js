@@ -363,6 +363,7 @@ const SCHEMA = [
         content         TEXT             NOT NULL,
         wa_message_id   VARCHAR(128)     NULL COMMENT 'Id no WhatsApp: evita duplicados quando a sessão reconecta',
         sender_user_id  INT UNSIGNED     NULL COMMENT 'Quem respondeu (sender_type = agent)',
+        ack             TINYINT UNSIGNED NULL COMMENT 'Estado no WhatsApp: 1 enviada, 2 entregue, 3 lida, 4 ouvida',
         created_at      DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
         PRIMARY KEY (id),
@@ -602,6 +603,12 @@ const COLUMN_MIGRATIONS = [
         ADD COLUMN remind_day_sent_at DATETIME NULL COMMENT 'Lembrete do dia enviado (ou dispensado)' AFTER status,
         ADD COLUMN remind_hour_sent_at DATETIME NULL COMMENT 'Lembrete de 1h antes enviado (ou dispensado)' AFTER remind_day_sent_at
     `,
+  },
+  {
+    table: 'messages',
+    column: 'ack',
+    name: 'messages: ack (enviada / entregue / lida no WhatsApp)',
+    sql: "ALTER TABLE messages ADD COLUMN ack TINYINT UNSIGNED NULL COMMENT 'Estado no WhatsApp: 1 enviada, 2 entregue, 3 lida, 4 ouvida' AFTER sender_user_id",
   },
   {
     table: 'deals',

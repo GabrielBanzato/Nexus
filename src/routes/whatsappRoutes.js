@@ -1,0 +1,288 @@
+import { publish } from '../lib/events.js';
+import { AppError, notFound } from '../lib/errors.js';
+import { isAdmin, requireRole } from '../plugins/auth.js';
+import { logActivity } from '../repositories/activityLogRepository.js';
+import { ensureClientForLead, findClientById } from '../repositories/clientRepository.js';
+import { listConversations, listMessages } from '../repositories/messageRepository.js';
+import { whatsappSignature } from '../repositories/userRepository.js';
+import { clientSummary } from '../services/whatsappInbox.js';
+import { sendToClient } from '../services/whatsappOutbox.js';
+import { idParam } from './schemas.js';
+
+/** Cliente que o utilizador pode ver: admin qualquer um; os demais, só os seus (senão 404). */
+async function findAccessibleClient(user, id) {
+  const client = await findClientById(id);
+  if (!client || (!isAdmin(user) && client.responsible_id !== user.id)) throw notFound('Cliente');
+  return client;
+}
+
+const conversationsSchema = {
+  querystring: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      q: { type: 'string', minLength: 1, maxLength: 100 },
+      // Só o admin escolhe: "all" = tudo o que chega ao número (como o app no telemóvel);
+      // "mine" = Foco, só as empresas atribuídas a ele. Os demais veem sempre só as suas.
+      scope: { type: 'string', enum: ['all', 'mine'], default: 'all' },
+      limit: { type: 'integer', minimum: 1, maximum: 300, default: 150 },
+    },
+  },
+};
+
+const sendSchema = {
+  params: idParam,
+  body: {
+    type: 'object',
+    required: ['content'],
+    additionalProperties: false,
+    // 4096 = limite prático de uma mensagem de texto no WhatsApp.
+    properties: { content: { type: 'string', minLength: 1, maxLength: 4096, pattern: '\\S' } },
+  },
+};
+
+const disabled = () =>
+  new AppError(503, 'WHATSAPP_DISABLED', 'A integração com o WhatsApp está desligada (defina WHATSAPP_ENABLED=true no servidor).');
+
+const aiDisabled = () =>
+  new AppError(503, 'AI_DISABLED', 'As sugestões da IA estão desligadas (defina AI_ENABLED=true no servidor).');
+
+const messagesSchema = {
+  params: idParam,
+  querystring: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      before: { type: 'integer', minimum: 1 }, // id da mensagem mais antiga já carregada
+      limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 },
+    },
+  },
+};
+
+const lastMessageId = async (clientId) => (await listMessages(clientId, { limit: 1 })).data.at(-1)?.id ?? null;
+
+export default async function whatsappRoutes(app) {
+  const sessionOnly = { preHandler: requireRole('admin') };
+
+  const requireService = () => {
+    if (!app.whatsapp) throw disabled();
+    return app.whatsapp;
+  };
+
+  /**
+   * QR Code para ligar o número da empresa. `qr` é um data URL (PNG) para <img src>; vem null
+   * quando não há QR a mostrar (a iniciar, já ligado...). O QR renova-se a cada ~20s: o painel
+   * pode voltar a pedir, ou ouvir `whatsapp:state` no Socket.io (sala dos admins).
+   * Exclusivo do admin: quem lê o QR liga um aparelho à conta de WhatsApp da empresa.
+   */
+  app.get('/api/whatsapp/qr', sessionOnly, async (request, reply) => {
+    const { status, qr, qr_updated_at: qrUpdatedAt } = requireService().getState();
+    reply.header('Cache-Control', 'no-store');
+    return { data: { status, qr, qr_updated_at: qrUpdatedAt } };
+  });
+
+  // Estado da IA (admin): Ollama no ar, modelo baixado/carregado, última sugestão.
+  app.get('/api/ai/status', sessionOnly, async () => {
+    const ai = app.ai;
+    if (!ai?.ollama) return { data: { enabled: false, model: ai?.model ?? null } };
+    return {
+      data: {
+        enabled: ai.enabled,
+        model: ai.model,
+        ...(await ai.ollama.status()),
+        last_reply: ai.agent?.lastResult() ?? null,
+      },
+    };
+  });
+
+  app.get('/api/whatsapp/status', sessionOnly, async () => {
+    const { qr, ...state } = requireService().getState();
+    return { data: { ...state, has_qr: Boolean(qr), enabled: true } };
+  });
+
+  // "Reconectar": sessão nova do zero (apaga a atual) e QR Code novo, em qualquer estado —
+  // a saída para quando fica preso a sincronizar, com erro, ou para trocar de número.
+  app.post('/api/whatsapp/reset', sessionOnly, async (request) => {
+    await requireService().resetSession();
+    await logActivity(request, { action: 'whatsapp.reset' });
+    return { data: requireService().getState() };
+  });
+
+  // Desliga o número atual (ex.: trocar de telemóvel). Em seguida é gerado um QR novo.
+  app.post('/api/whatsapp/logout', sessionOnly, async (request) => {
+    const done = await requireService().logout();
+    if (!done) throw new AppError(409, 'CONFLICT', 'Não há nenhum número conectado neste momento.');
+    await logActivity(request, { action: 'whatsapp.logout' });
+    return { data: requireService().getState() };
+  });
+
+  /**
+   * Histórico da conversa de um cliente (ordem cronológica, paginado para trás com `before`).
+   * Mesma regra de privacidade do resto do CRM: admin vê tudo; os demais só os clientes de que
+   * são responsáveis (outro cliente responde 404).
+   */
+  /**
+   * O vendedor está a ver a conversa no Nexus: marca-a como lida no WhatsApp (o cliente vê os
+   * ✓✓ azuis, como se alguém a tivesse aberto no telemóvel). O frontend chama ao abrir a conversa
+   * e quando chega mensagem nova com ela aberta e a janela visível.
+   */
+  app.post('/api/clients/:id/seen', { schema: { params: idParam } }, async (request) => {
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    const seen = app.whatsapp && client.whatsapp_jid ? await app.whatsapp.markSeen(client.whatsapp_jid).catch(() => false) : false;
+    return { data: { seen } };
+  });
+
+  /** Diagnóstico do "visto" desta conversa (só admin): o que o WhatsApp Web diz e o que se fez. */
+  app.get('/api/clients/:id/ack-debug', { schema: { params: idParam } }, async (request, reply) => {
+    if (!isAdmin(request.currentUser)) return reply.code(403).send({ code: 'FORBIDDEN', error: 'Só o admin.' });
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    if (!app.ackSync) return { data: { error: 'WhatsApp desligado neste servidor' } };
+    return { data: await app.ackSync.diagnose(client) };
+  });
+
+  app.get('/api/clients/:id/messages', { schema: messagesSchema }, async (request) => {
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    const { before, limit } = request.query;
+    // Abriu a conversa: em segundo plano, confere no WhatsApp o "visto" das últimas mensagens
+    // (o que mudar chega por socket). Só na página mais recente.
+    if (!before) app.ackSync?.refresh(client, { force: true });
+    return listMessages(client.id, { before, limit });
+  });
+
+  /**
+   * Lista da Central de Atendimento. Admin: `scope=all` (tudo, inclusive contactos sem
+   * responsável e clientes arquivados com conversa) ou `scope=mine` (Foco). Demais: só os seus.
+   * `meta.whatsapp` diz a todos se dá para enviar agora (sem expor o QR a não-admins);
+   * `meta.signature` é como as mensagens deste utilizador chegam ao cliente; `meta.ai` se há
+   * sugestões da IA.
+   */
+  app.get('/api/conversations', { schema: conversationsSchema }, async (request) => {
+    const user = request.currentUser;
+    const { q, limit } = request.query;
+    const scope = isAdmin(user) ? request.query.scope : 'mine';
+    const data = await listConversations({
+      responsibleId: scope === 'mine' ? user.id : undefined,
+      includeArchived: scope === 'all',
+      q,
+      limit,
+    });
+    return {
+      data,
+      meta: {
+        scope,
+        signature: await whatsappSignature(user),
+        whatsapp: { enabled: Boolean(app.whatsapp), status: app.whatsapp?.getState().status ?? 'disabled' },
+        ai: { enabled: Boolean(app.ai?.agent) },
+      },
+    };
+  });
+
+  /**
+   * Envia uma mensagem de texto ao cliente pelo WhatsApp e grava-a (sender_type = agent).
+   * O número é partilhado: o texto enviado leva a assinatura de quem escreve ("*Gabriel*\n...").
+   * O evento new_message chega a todos os que veem o cliente, inclusive às outras abas de quem
+   * enviou.
+   */
+  app.post('/api/clients/:id/messages', { schema: sendSchema }, async (request, reply) => {
+    const user = request.currentUser;
+    const client = await findAccessibleClient(user, request.params.id);
+    requireService();
+
+    let result;
+    try {
+      result = await sendToClient({
+        whatsapp: app.whatsapp,
+        io: app.io,
+        client,
+        content: request.body.content.trim(),
+        senderType: 'agent',
+        senderUserId: user.id,
+        signature: await whatsappSignature(user),
+      });
+    } catch (err) {
+      throw toHttpError(err, client);
+    }
+    return reply.code(201).send({ data: result.message, meta: { client: clientSummary(result.client) } });
+  });
+
+  /**
+   * "Chamar no WhatsApp" a partir de um lead (Prospecção/Triagem): devolve a conversa do lead na
+   * Central (cria o cliente se ainda não houver), para a mensagem sair pelo número da empresa,
+   * assinada, em vez de abrir o app do WhatsApp do computador. Não envia nada: a Central abre
+   * com o texto no campo para a pessoa rever e enviar.
+   * Parceiro: só leads que ele trabalha (e empresas que não são de outro parceiro).
+   */
+  /**
+   * "Estes leads têm WhatsApp?" (Triagem): checa no WhatsApp os que ainda não se sabe, aos
+   * poucos (lotes pequenos, uma consulta de cada vez) e grava no lead. skipped = WhatsApp desligado.
+   */
+  app.post(
+    '/api/leads/wa-check',
+    { schema: { body: { type: 'object', required: ['ids'], additionalProperties: false, properties: { ids: { type: 'array', maxItems: 100, items: { type: 'integer', minimum: 1 } } } } } },
+    async (request) => {
+      if (!app.waCheck) return { data: { skipped: true, results: [] } };
+      return { data: await app.waCheck.checkLeads(request.body.ids) };
+    },
+  );
+
+  /** Central: esta conversa (ainda sem contacto no WhatsApp) tem para onde enviar? */
+  app.get('/api/clients/:id/wa-check', { schema: { params: idParam } }, async (request) => {
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    return { data: { exists: app.waCheck ? await app.waCheck.checkClient(client) : null } };
+  });
+
+  app.post('/api/leads/:id/conversation', { schema: { params: idParam } }, async (request) => {
+    const user = request.currentUser;
+    const admin = isAdmin(user);
+    const { client, reason } = await ensureClientForLead(request.params.id, {
+      fallbackResponsibleId: user.id,
+      allow: ({ workerId, responsibleId }) =>
+        admin || (workerId === user.id && (responsibleId === null || responsibleId === user.id)),
+    });
+    if (reason === 'NO_PHONE') throw new AppError(422, 'NO_PHONE', 'Este lead não tem um telefone válido para WhatsApp.');
+    if (!client) throw notFound('Lead');
+    publish('clients', request); // SSE: listas de clientes abertas recarregam
+    return { data: clientSummary(client) };
+  });
+
+  /**
+   * Sugestão da IA para a conversa (rascunho que o humano usa/edita e envia, nunca enviado
+   * sozinho). GET: a sugestão atual, se ainda corresponder à última mensagem; `meta.pending`
+   * diz se há uma a ser gerada. POST: gera agora (≈10–20s na CPU do servidor).
+   */
+  app.get('/api/clients/:id/ai-suggestion', { schema: { params: idParam } }, async (request) => {
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    const agent = app.ai?.agent;
+    if (!agent) return { data: null, meta: { enabled: false, pending: false } };
+    return { data: agent.current(client.id, await lastMessageId(client.id)), meta: { enabled: true, pending: agent.isSuggesting(client.id) } };
+  });
+
+  app.post('/api/clients/:id/ai-suggestion', { schema: { params: idParam } }, async (request) => {
+    const client = await findAccessibleClient(request.currentUser, request.params.id);
+    const agent = app.ai?.agent;
+    if (!agent) throw aiDisabled();
+    if (!(await lastMessageId(client.id))) throw new AppError(422, 'NO_MESSAGES', 'Ainda não há mensagens nesta conversa para a IA sugerir uma resposta.');
+    try {
+      return { data: await agent.suggestNow(client.id) };
+    } catch (err) {
+      request.log.error({ err, clientId: client.id }, 'IA: falha ao gerar a sugestão');
+      throw new AppError(503, 'AI_UNAVAILABLE', 'A IA não conseguiu sugerir uma resposta agora. Tente de novo em instantes.');
+    }
+  });
+}
+
+/** Erros do envio (whatsappOutbox) → resposta HTTP com mensagem para o utilizador. */
+function toHttpError(err, client) {
+  switch (err.code) {
+    case 'WHATSAPP_DISABLED':
+      return disabled();
+    case 'WHATSAPP_NOT_READY':
+      return new AppError(503, err.code, 'O WhatsApp da empresa não está conectado. Peça ao admin para ler o QR Code.');
+    case 'NO_PHONE':
+      return new AppError(422, err.code, err.message);
+    case 'NOT_ON_WHATSAPP':
+      return new AppError(422, err.code, `O número ${client.phone} não tem WhatsApp.`);
+    default:
+      return err;
+  }
+}

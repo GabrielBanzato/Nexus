@@ -9,5 +9,8 @@ scripts
 .env
 .env.*
 *.log
+# Sessão local do WhatsApp não pode acabar dentro da imagem.
+.wwebjs_auth
+.wwebjs_cache
 Dockerfile
 docker-compose.yml

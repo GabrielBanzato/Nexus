@@ -68,16 +68,128 @@ services:
       SCRAPER_HEADLESS: "true"
       SCRAPER_MAX_RESULTS: ${SCRAPER_MAX_RESULTS:-50}
       # Autenticação
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD no .env}
+      # Primeiro admin: criado no arranque apenas se a tabela users estiver vazia.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@nexus.local}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrador}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no .env (min. 32 caracteres)}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
       # Atrás do Nginx: o IP real do usuário vem em X-Forwarded-For (rate limit do login).
       TRUST_PROXY: "true"
+      # WhatsApp (whatsapp-web.js): ligue e leia o QR Code no painel (admin).
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-true}
+      WHATSAPP_AUTO_CREATE_CLIENTS: ${WHATSAPP_AUTO_CREATE_CLIENTS:-true}
+      # Reinício diário da ligação (hora de Brasília; "off" desliga). Não voltou → pede QR.
+      WHATSAPP_DAILY_RESTART_HOUR: ${WHATSAPP_DAILY_RESTART_HOUR:-7}
+      BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-America/Sao_Paulo}
+      # Hora do lembrete "hoje tem reunião" (cliente e quem conduz); o outro sai 1h antes.
+      MEETING_REMINDER_HOUR: ${MEETING_REMINDER_HOUR:-8}
+      # IA (Nex + sugestões de resposta). Só esta variável liga/desliga: o serviço "ollama" sobe sempre.
+      AI_ENABLED: ${AI_ENABLED:-false}
+      OLLAMA_URL: http://ollama:11434
+      # Vazio = o padrão do provedor (qwen3.5:2b-q4_K_M no Ollama; claude-haiku-5-5 no Claude).
+      AI_MODEL: ${AI_MODEL:-}
+      # Claude (opcional, pago por uso): com a chave, o Nex passa a usar o Claude em vez do Qwen local.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      AI_NUM_THREAD: ${AI_NUM_THREAD:-2}
+      # Videochamadas: link enviado ao cliente + relé TURN (serviço "coturn", perfil "meet").
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_SECRET: ${TURN_SECRET:-}
+      MEET_MAX_PARTICIPANTS: ${MEET_MAX_PARTICIPANTS:-3}
+      # Nex nas reuniões: transcrição local (serviço "whisper"). MEET_NEX_ENABLED=false desliga.
+      WHISPER_URL: http://whisper:9000
+      MEET_NEX_ENABLED: ${MEET_NEX_ENABLED:-true}
+    volumes:
+      # Sessão autenticada do WhatsApp: sobrevive a rebuilds/restarts (sem novo QR).
+      - whatsapp_session:/app/.wwebjs_auth
     ports:
       - "3000:3000"
     depends_on:
       db:
         condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # IA local (Qwen via Ollama, só CPU). Sobe sempre; sem AI_ENABLED=true fica parado sem modelo
+  # carregado (~50 MB), porque quem carrega o modelo é o backend. (Antes dependia do perfil "ai",
+  # que o Portainer nem sempre aplica.)
+  # Dimensionado para o VPS KVM 2 (2 vCPU, 8 GB). Medido com o qwen3.5:2b-q4_K_M na CPU:
+  # ~2,0 GB residentes (pico ~2,9 GB); Chrome do WhatsApp ~0,8–1,2 GB. Pior caso da stack
+  # inteira (IA a gerar + scraper a correr) ≈ 6,2 GB de 8.
+  # O backend baixa o modelo na primeira vez (~1,9 GB) e mantém-no carregado.
+  ollama:
+    image: ollama/ollama:0.35.1
+    restart: unless-stopped
+    environment:
+      OLLAMA_NUM_PARALLEL: "1" # 2 vCPU: gerações em paralelo só se atrasariam umas às outras
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_KEEP_ALIVE: "-1" # modelo sempre na RAM: sem recarga do disco na 1.ª resposta
+    volumes:
+      - ollama_models:/root/.ollama
+    # Margem sobre o pico medido (~2,9 GB): no Linux o cache do ficheiro do modelo (mmap) também
+    # conta para o limite do container. Sem porta publicada (só a rede interna).
+    mem_limit: 3500m
+    # Prioridade de CPU baixa (padrão 1024): a IA usa os 2 vCPU quando estão livres, mas MySQL,
+    # backend e Chrome passam à frente quando precisam. Com 1 thread a resposta dobraria
+    # (medido: 8,9s → 18s), por isso a IA fica com 2 threads e cede pela prioridade.
+    cpu_shares: 256
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Transcrição das reuniões para o Nex (faster-whisper, só CPU; ver whisper/app.py).
+  # Medido (i7, 2 threads, 31 s de fala): small 5,5 s · base 1,9 s. Na 1.ª subida baixa o modelo
+  # (small ~480 MB) para o volume. RAM ~0,6–0,9 GB com o small. Sem porta publicada.
+  # Mais leve: WHISPER_MODEL=base. Servidor maior: medium (bem mais preciso).
+  whisper:
+    build:
+      context: ./whisper
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      WHISPER_THREADS: ${WHISPER_THREADS:-2}
+    volumes:
+      - whisper_models:/models
+    mem_limit: 1500m
+    # Mesma ideia do ollama: usa os 2 vCPU quando estão livres e cede ao resto da stack.
+    cpu_shares: 512
+
+  # ---------------------------------------------------------------------------
+  # Relé TURN das videochamadas (só sobe com o perfil "meet": COMPOSE_PROFILES=meet).
+  # O vídeo vai direto entre navegadores; o TURN só retransmite quando a rede bloqueia o P2P
+  # (≈10–20% das ligações: redes corporativas, 4G com CGNAT). Não processa vídeo: CPU/RAM ínfimos.
+  # Firewall da VPS: abrir 3478/udp, 3478/tcp e 49160-49200/udp. NÃO passa pelo Cloudflare Tunnel
+  # (o túnel só leva HTTP); TURN_URLS usa o IP da VPS ou um subdomínio "DNS only" (nuvem cinzenta).
+  coturn:
+    image: coturn/coturn:4.18.0
+    profiles: ["meet"]
+    restart: unless-stopped
+    network_mode: host # muitas portas UDP + IP real: a rede bridge do Docker atrapalharia o relé
+    environment:
+      TURN_SECRET: ${TURN_SECRET:-}
+    entrypoint: ["sh", "-c"]
+    # Testado com a 4.18.0: --no-dtls já não existe e --no-cli foi descontinuado (a CLI vem
+    # desligada por padrão). Com eles o turnserver recusa arrancar.
+    command:
+      - >-
+        [ -n "$$TURN_SECRET" ] || { echo 'Defina TURN_SECRET no .env'; exit 1; };
+        exec turnserver -n --log-file=stdout --fingerprint
+        --listening-port=3478 --min-port=49160 --max-port=49200
+        --use-auth-secret --static-auth-secret="$$TURN_SECRET" --realm=nexus
+        --no-tls --no-multicast-peers
+        --user-quota=12 --total-quota=60 --max-bps=3000000
+        --denied-peer-ip=0.0.0.0-0.255.255.255
+        --denied-peer-ip=10.0.0.0-10.255.255.255
+        --denied-peer-ip=100.64.0.0-100.127.255.255
+        --denied-peer-ip=127.0.0.0-127.255.255.255
+        --denied-peer-ip=169.254.0.0-169.254.255.255
+        --denied-peer-ip=172.16.0.0-172.31.255.255
+        --denied-peer-ip=192.168.0.0-192.168.255.255
+    mem_limit: 128m
 
   # ---------------------------------------------------------------------------
   frontend:
@@ -107,3 +219,6 @@ services:
 
 volumes:
   mysql_data:
+  whatsapp_session:
+  ollama_models:
+  whisper_models:

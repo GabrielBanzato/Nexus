@@ -1,42 +1,62 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
 import fastifyJwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import { config } from '../config/env.js';
+import { forbidden, unauthorized } from '../lib/errors.js';
+import { findUserById } from '../repositories/userRepository.js';
 
 const MIN_SECRET_LENGTH = 32;
 
-/** Falha na inicialização em vez de subir uma API desprotegida. */
+/** Falha na inicialização em vez de subir uma API com tokens fracos. */
 export function assertAuthConfig() {
-  const { adminPassword, jwtSecret } = config.auth;
-  if (!adminPassword) throw new Error('ADMIN_PASSWORD não definido.');
-  if (jwtSecret.length < MIN_SECRET_LENGTH) {
+  if (config.auth.jwtSecret.length < MIN_SECRET_LENGTH) {
     throw new Error(`JWT_SECRET ausente ou curto demais (mínimo ${MIN_SECRET_LENGTH} caracteres).`);
   }
 }
 
-/** Comparação em tempo constante: não vaza, pelo tempo de resposta, quantos caracteres batem. */
-function passwordMatches(candidate) {
-  const hash = (value) => createHash('sha256').update(String(value)).digest();
-  return timingSafeEqual(hash(candidate), hash(config.auth.adminPassword));
+/**
+ * Hook onRequest das rotas protegidas: valida o JWT e carrega o utilizador do banco.
+ * Consultar o banco a cada pedido faz com que desativar uma conta ou mudar o seu papel
+ * tenha efeito imediato, sem esperar o token expirar.
+ */
+export async function authenticate(request) {
+  let payload;
+  try {
+    payload = await request.jwtVerify();
+  } catch {
+    throw unauthorized('Sessão inválida ou expirada. Faça login novamente.');
+  }
+
+  const user = Number.isInteger(payload.sub) ? await findUserById(payload.sub) : null;
+  if (!user || !user.is_active) throw unauthorized('Conta inexistente ou desativada.');
+
+  request.currentUser = user;
 }
 
-/** Hook onRequest para rotas protegidas: exige "Authorization: Bearer <token>". */
-export async function authenticate(request, reply) {
-  try {
-    await request.jwtVerify();
-  } catch {
-    return reply.code(401).send({
-      statusCode: 401,
-      error: 'Unauthorized',
-      message: 'Sessão inválida ou expirada. Faça login novamente.',
-    });
-  }
+/** preHandler que restringe a rota a determinados papéis. Uso: { preHandler: requireRole('admin') } */
+export function requireRole(...roles) {
+  return async function checkRole(request) {
+    if (!roles.includes(request.currentUser?.role)) {
+      throw forbidden(`Requer papel: ${roles.join(' ou ')}.`);
+    }
+  };
+}
+
+export const isManager = (user) => user.role === 'admin' || user.role === 'partner';
+
+/**
+ * Visão de toda a equipe (filtro "Toda a equipe") é exclusiva do admin.
+ * Partners e agents só veem os leads/negócios/tarefas de que são responsáveis.
+ */
+export const isAdmin = (user) => user.role === 'admin';
+
+/** Assina o token de sessão de um utilizador. */
+export function signSessionToken(reply, user) {
+  return reply.jwtSign({ sub: user.id, role: user.role, name: user.name });
 }
 
 /**
- * Registra o JWT e a rota pública POST /api/login.
- * É chamada diretamente com o app raiz (não via app.register) para que
- * request.jwtVerify() fique disponível em todos os contextos, inclusive os protegidos.
+ * Registra JWT e rate limit no app raiz (não via app.register), para que
+ * request.jwtVerify() fique disponível em todos os contextos.
  */
 export async function registerAuth(app) {
   await app.register(fastifyJwt, {
@@ -44,37 +64,13 @@ export async function registerAuth(app) {
     sign: { expiresIn: config.auth.jwtExpiresIn },
   });
 
-  // Rate limit apenas onde é necessário (login), contra força bruta na senha fixa.
+  // Rate limit apenas nas rotas que optarem (login), contra força bruta.
   await app.register(rateLimit, {
     global: false,
     errorResponseBuilder: (request, context) => ({
       statusCode: 429,
-      error: 'Too Many Requests',
-      message: `Muitas tentativas de login. Aguarde ${Math.ceil(context.ttl / 1000)}s e tente novamente.`,
+      code: 'RATE_LIMITED',
+      message: `Muitas tentativas. Aguarde ${Math.ceil(context.ttl / 1000)}s e tente novamente.`,
     }),
   });
-
-  app.post(
-    '/api/login',
-    {
-      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
-      schema: {
-        body: {
-          type: 'object',
-          required: ['senha'],
-          additionalProperties: false,
-          properties: { senha: { type: 'string', minLength: 1, maxLength: 200 } },
-        },
-      },
-    },
-    async (request, reply) => {
-      if (!passwordMatches(request.body.senha)) {
-        request.log.warn({ ip: request.ip }, 'Tentativa de login com senha incorreta');
-        return reply.code(401).send({ statusCode: 401, error: 'Unauthorized', message: 'Senha incorreta.' });
-      }
-
-      const token = await reply.jwtSign({ sub: 'admin', role: 'admin' });
-      return { token, expiresIn: config.auth.jwtExpiresIn };
-    },
-  );
 }

@@ -4,6 +4,7 @@
  */
 
 const TOKEN_KEY = 'nexus:token';
+export const TOKEN_STORAGE_KEY = TOKEN_KEY;
 export const SESSION_EXPIRED_EVENT = 'nexus:session-expired';
 
 // Margem para não usar um token que expira durante a requisição.
@@ -16,6 +17,12 @@ function decodePayload(token) {
   } catch {
     return null;
   }
+}
+
+/** Dados públicos do token válido ({ sub, role, name }) ou null. Usado pela sala de vídeo (fora do login). */
+export function getTokenPayload() {
+  const token = getToken();
+  return token ? decodePayload(token) : null;
 }
 
 /** Timestamp (ms) de expiração do token, ou null se inválido. */

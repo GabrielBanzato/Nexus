@@ -3,3 +3,6 @@ data/
 .env
 *.log
 dist/
+# Sessão do WhatsApp: equivale a estar logado na conta da empresa. Nunca versionar.
+.wwebjs_auth/
+.wwebjs_cache/

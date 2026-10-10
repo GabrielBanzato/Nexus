@@ -570,6 +570,8 @@ function ContactToggle({ lead, onToggle }) {
 function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify, onRequalify, busy }) {
   const hasSite = lead.lead_group === 'COM_SITE' && lead.website;
   const alreadyApproached = lead.status_prospeccao && lead.status_prospeccao !== 'NOVO';
+  // Contatado (mensagem enviada pela Central, ou marcado à mão): as mesmas marcas da Triagem.
+  const contacted = Boolean(lead.contacted_at) || lead.status_prospeccao === 'CONTATADO';
   const hidden = Boolean(lead.is_hidden);
   // Qualificar = mandar para a coluna "Triagem/Novo" do pipeline (só antes da negociação).
   // Arquivado na Triagem não pode ser decidido: nesse caso o caminho é Requalificar.
@@ -580,7 +582,13 @@ function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify,
     <article
       aria-label={lead.name}
       className={`${cardClass} ${
-        hidden ? 'border-dashed border-neutral-700 opacity-75 hover:opacity-100' : alreadyApproached ? 'border-neutral-800/60 opacity-80 hover:opacity-100' : 'border-neutral-800'
+        hidden
+          ? 'border-dashed border-neutral-700 opacity-75 hover:opacity-100'
+          : contacted
+            ? 'border-emerald-800/70 border-l-4 border-l-emerald-600 bg-emerald-950/10'
+            : alreadyApproached
+              ? 'border-neutral-800/60 opacity-80 hover:opacity-100'
+              : 'border-neutral-800'
       }`}
     >
       {hidden && (
@@ -613,9 +621,15 @@ function LeadCard({ lead, onContact, onToggleContact, onToggleHidden, onQualify,
         <Rating rating={lead.rating} reviewsCount={lead.reviews_count} />
         <ContactToggle lead={lead} onToggle={onToggleContact} />
       </div>
+      {(lead.contacted_at || lead.wa_status === 'no') && (
+        <p className="-mt-2 mb-3 flex flex-wrap gap-x-3 text-xs">
+          {lead.contacted_at && <span className="font-medium text-emerald-400">✓ Mensagem enviada {formatRelative(lead.contacted_at)}</span>}
+          {lead.wa_status === 'no' && <span className="font-medium text-amber-400">Sem WhatsApp: ligar</span>}
+        </p>
+      )}
 
       <div className="mt-auto space-y-2 border-t border-neutral-800 pt-4">
-        <WhatsAppButton lead={lead} approached={alreadyApproached} onContact={onContact} />
+        <WhatsAppButton lead={lead} approached={alreadyApproached || contacted} onContact={onContact} />
 
         {canQualify && (
           <button

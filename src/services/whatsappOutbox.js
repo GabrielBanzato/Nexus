@@ -44,6 +44,10 @@ export async function sendToClient({ whatsapp, io, client, content, senderType, 
     throw err;
   }
   if (!client.whatsapp_jid) await markLead(client.lead_id, true).catch(() => {});
+  // Prospecção: o lead passa a "Contatado" (só a partir de "Novo": não mexe em negociação/cliente).
+  if (client.lead_id) {
+    await db('leads').where({ id: client.lead_id, status_prospeccao: 'NOVO' }).update({ status_prospeccao: 'CONTATADO' }).catch(() => {});
+  }
 
   const record = { clientId: client.id, senderType, content, senderUserId, ack: 1 };
   // Id repetido (o id recuperado na conversa era de um envio anterior com o mesmo texto): a

@@ -71,6 +71,7 @@ const API_COLUMNS = {
   status_prospeccao: 'status_prospeccao',
   is_hidden: 'is_hidden',
   hidden_at: 'hidden_at',
+  wa_status: 'wa_status',
   maps_url: 'maps_url',
   search_term: 'termo_busca',
   created_at: 'criado_em',
@@ -203,6 +204,11 @@ export async function findLeads({ grupo, nicho, contato, visibilidade = 'ativos'
     .leftJoin('lead_triage as t', 't.lead_id', 'l.id')
     .leftJoin('deals as d', 'd.id', 't.deal_id')
     .select({ ...prefixColumns('l'), ...CRM_COLUMNS })
+    // Mensagem enviada pela Central (a mesma marca da Triagem: faixa verde, "Mensagem enviada há X").
+    .select(
+      db.raw(`(SELECT MAX(m.created_at) FROM clients c JOIN messages m ON m.client_id = c.id
+                WHERE c.lead_id = l.id AND m.sender_type IN ('agent', 'bot')) AS contacted_at`),
+    )
     .orderBy([{ column: 'l.criado_em', order: 'desc' }, { column: 'l.id', order: 'desc' }])
     .limit(limit)
     .offset(offset);

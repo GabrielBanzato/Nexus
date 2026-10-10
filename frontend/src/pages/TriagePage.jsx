@@ -675,7 +675,7 @@ function LeadBox({ lead, status, isAdmin, users, selectable, selected, onToggleS
       className={cx(
         cardClass,
         'outline-none focus-visible:ring-2 focus-visible:ring-red-700',
-        selected ? 'border-red-800 bg-red-950/10' : lead.contacted_at ? 'border-emerald-800/70 bg-emerald-950/10' : 'border-neutral-800',
+        selected ? 'border-red-800 bg-red-950/10' : lead.contacted_at ? 'border-emerald-800/70 border-l-4 border-l-emerald-600 bg-emerald-950/10' : 'border-neutral-800',
         highlighted && 'ring-1 ring-emerald-500/70',
       )}
     >

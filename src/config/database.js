@@ -749,6 +749,16 @@ const POST_MIGRATIONS = [
           SET t.archived_at = NOW() WHERE c.status = 'archived' AND t.archived_at IS NULL`,
   },
   {
+    // Mensagens enviadas pela Central antes de a Prospecção acompanhar: o lead fica "Contatado".
+    // Só uma vez (marca na tabela de controlo): depois, quem desmarcar à mão não é desfeito.
+    name: 'leads: "Contatado" na Prospecção para quem já recebeu mensagem pela Central',
+    once: true,
+    sql: `UPDATE leads l SET l.status_prospeccao = 'CONTATADO'
+          WHERE l.status_prospeccao = 'NOVO' AND EXISTS (
+            SELECT 1 FROM clients c JOIN messages m ON m.client_id = c.id
+            WHERE c.lead_id = l.id AND m.sender_type IN ('agent', 'bot'))`,
+  },
+  {
     // Avisos de sistema do WhatsApp gravados como mensagens antes do filtro (whatsappInbox.SYSTEM_TYPES).
     name: 'messages: apagar avisos de sistema do WhatsApp ("[e2e_notification]" e afins)',
     sql: `DELETE FROM messages WHERE content IN ('[e2e_notification]', '[notification]', '[notification_template]', '[gp2]', '[protocol]',
@@ -822,8 +832,16 @@ async function migrate(logger) {
     }
   }
 
-  for (const { name, sql } of POST_MIGRATIONS) {
+  // `once`: correções de dados que só podem correr uma vez (repetidas, desfariam escolhas manuais).
+  await db.raw(`CREATE TABLE IF NOT EXISTS schema_data_migrations (
+    name   VARCHAR(190) NOT NULL PRIMARY KEY,
+    ran_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci`);
+  const ran = new Set(await db('schema_data_migrations').pluck('name'));
+  for (const { name, sql, once } of POST_MIGRATIONS) {
+    if (once && ran.has(name)) continue;
     const [result] = await db.raw(sql);
+    if (once) await db('schema_data_migrations').insert({ name }).onConflict('name').ignore();
     if (result?.affectedRows) logger.info({ rows: result.affectedRows }, `Auto-migration: ${name}`);
   }
 
